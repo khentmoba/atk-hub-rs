@@ -342,7 +342,9 @@ pub fn logo(ui: &mut Ui, size: Vec2) {
         let height = image.height() as usize;
         let pixels: Vec<Color32> = image
             .as_raw()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
             .collect();
         let handle = ctx.load_texture(
