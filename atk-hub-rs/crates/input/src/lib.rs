@@ -3,6 +3,12 @@
 //! Injection is only performed when the user explicitly runs a macro; tests
 //! cover parsing and sequencing, never actual input events.
 
+pub mod apps;
+pub mod audio;
+pub mod loopback;
+pub mod media;
+pub mod system;
+
 use std::str::FromStr;
 use thiserror::Error;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -153,4 +159,19 @@ impl KeyInjector {
         }
         Ok(())
     }
+}
+
+/// Presses or releases one raw virtual key, as captured by the macro recorder.
+///
+/// # Safety contract
+///
+/// The unsafe call passes a virtual-key byte with no scan code or extra info.
+pub fn send_vk(vk: u8, down: bool) {
+    let flags = if down {
+        KEYBD_EVENT_FLAGS::default()
+    } else {
+        KEYEVENTF_KEYUP
+    };
+    // SAFETY: `vk` is a plain virtual-key byte; scan code and extra info are zero.
+    unsafe { keybd_event(vk, 0, flags, 0) };
 }

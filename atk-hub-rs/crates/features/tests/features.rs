@@ -37,10 +37,9 @@ fn macros_round_trip_through_disk() {
     let path = dir.join("macros.json");
     let macros = vec![Macro {
         name: "combo".to_owned(),
-        steps: vec![MacroStep {
-            key: "Ctrl+K".to_owned(),
-            delay_ms: 40,
-        }],
+        steps: vec![MacroStep::press("Ctrl+K", 40)],
+        repeat_mode: atk_features::RepeatMode::Count,
+        repeat_count: 2,
     }];
     atk_features::save_macros(&path, &macros).expect("save");
     assert_eq!(atk_features::load_macros(&path).expect("load"), macros);
@@ -106,4 +105,68 @@ fn plugin_listing_is_empty_for_a_missing_directory() {
             .expect("missing directory")
             .is_empty()
     );
+}
+
+#[test]
+fn pet_settings_read_progress_keys() {
+    let config = atk_config::Config::parse(
+        r#"{"progress":{"enabled":true,"petVisible":false,"sound":true,"skin":"gold","period":"day","days":{"a":1}}}"#,
+    )
+    .unwrap();
+    let pet = atk_features::PetSettings::from_config(&config);
+    assert!(pet.enabled && pet.sound && !pet.pet_visible);
+    assert_eq!(pet.skin, "gold");
+}
+
+#[test]
+fn hub_settings_round_trip_under_setting() {
+    let mut config =
+        atk_config::Config::parse(r#"{"setting":{"closeMinimizeTray":false}}"#).unwrap();
+    let mut settings = atk_features::HubSettings::from_config(&config);
+    assert!(!settings.close_minimize_tray);
+    settings.open_at_login = true;
+    settings.apply(&mut config).unwrap();
+    assert_eq!(
+        config.get("setting.openAtLogin"),
+        Some(&serde_json::json!(true))
+    );
+}
+
+#[test]
+fn sha512_base64_matches_known_digest() {
+    assert_eq!(
+        atk_features::sha512_base64(b"abc"),
+        "3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw=="
+    );
+}
+
+#[test]
+fn game_rule_matching_ignores_case() {
+    let rules = vec![atk_features::GameRule {
+        exe: "Game.exe".into(),
+        profile: 2,
+        keyboard_profile: None,
+    }];
+    assert_eq!(
+        atk_features::match_game_rule(&rules, "game.EXE").map(|rule| rule.profile),
+        Some(2)
+    );
+    assert_eq!(
+        atk_features::url_file_name("https://x/y/a%20b.exe?x=1"),
+        "a%20b.exe"
+    );
+}
+
+#[test]
+fn plugins_report_renderers_and_can_be_removed() {
+    let root = std::env::temp_dir().join(format!("atk-plugins-{}", std::process::id()));
+    let dir = root.join("plugins").join("pc-script").join("1.0.0");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("pc-script.js"), "export default {}").unwrap();
+    let plugins = atk_features::list_plugins(&root).unwrap();
+    assert!(plugins[0].pc_script && !plugins[0].floating);
+    assert!(atk_features::remove_plugin(&root, "../evil").is_err());
+    atk_features::remove_plugin(&root, "pc-script").unwrap();
+    assert!(atk_features::list_plugins(&root).unwrap().is_empty());
+    let _ = fs::remove_dir_all(root);
 }

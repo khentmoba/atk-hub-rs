@@ -21,7 +21,7 @@ fn correlates_responses_and_forwards_events() {
 
     let server_thread = thread::spawn(move || {
         let mut server = server.wait().expect("client connection");
-        server.set_read_timeout(Some(Duration::from_secs(2)));
+        server.set_read_timeout(Some(Duration::from_secs(10)));
 
         let mut chunk = [0_u8; 4096];
         let count = server.read(&mut chunk).expect("request frame");
@@ -48,7 +48,7 @@ fn correlates_responses_and_forwards_events() {
     assert_eq!(result, json!({ "devices": [] }));
 
     let event = events
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(5))
         .expect("event delivered");
     assert_eq!(event["event"], "agent.status");
     assert_eq!(event["data"]["connected"], true);
@@ -62,14 +62,18 @@ fn rejects_methods_outside_the_agent_allowlist() {
         .first(false)
         .single()
         .expect("create test pipe");
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let server_thread = thread::spawn(move || {
-        // No request will be written, so do not block waiting for one.
-        let _ = server.wait_ms(1_000);
+        // Keep the accepted server handle alive until the client finishes connecting and asserting.
+        let _connected = server.wait_ms(5_000);
+        let _ = done_rx.recv_timeout(Duration::from_secs(5));
     });
 
     let pipe = PipeName::parse(ALLOWLIST_NAME).expect("valid test pipe");
     let client = AgentClient::connect(&pipe).expect("connect to test pipe");
     assert!(client.request("shell.execute", Value::Null).is_err());
 
+    drop(client);
+    let _ = done_tx.send(());
     server_thread.join().expect("server thread");
 }

@@ -19,7 +19,9 @@ path = "src/main.rs"
 tauri-build = { version = "2" }
 
 [dependencies]
-tauri = { version = "2" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+ureq = { version = "2.12", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 atk-agent.workspace = true
@@ -31,7 +33,9 @@ atk-wallpaper.workspace = true
 atk-audio.workspace = true
 atk-features.workspace = true
 atk-input.workspace = true
+atk-hid.workspace = true
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
 
 [lints]
 workspace = true

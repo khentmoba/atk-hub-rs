@@ -1,13 +1,24 @@
 //! Tauri desktop shell for the ATK HUB Rust port.
 
 use atk_config::Config;
-use atk_features::{DriverInfo, Lighting, Macro, MacroStep};
+use atk_features::{DriverInfo, GameRule, HubSettings, Lighting, Macro, MacroStep, RepeatMode};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
+
+mod dotscreen;
+mod firmware;
+mod headset;
+mod live;
+mod livewall;
+mod overlay;
+mod pcscript;
+mod practice;
+mod rhythm;
+mod thx_driver;
+mod toolbar;
 
 #[cfg(not(windows))]
 use atk_agent::PipeName;
@@ -16,7 +27,10 @@ use atk_agent::{AgentClient, DeviceId, PipeName, Rule, RuleAction};
 
 #[cfg(test)]
 const DEFAULT_PIPE: &str = "atk-hub-agent-session-1";
-const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
+pub(crate) const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\app.asar";
+pub(crate) const FALLBACK_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
+#[cfg(windows)]
+const SERVICE_EXE: &str = r"C:\Program Files\ATK HUB\resources\service\atk-hub-service.exe";
 
 struct HubState {
     #[cfg(windows)]
@@ -25,6 +39,10 @@ struct HubState {
     client: Mutex<Option<()>>,
     macro_path: Mutex<String>,
     macros: Mutex<Vec<Macro>>,
+    mouse: live::SharedMouse,
+    keyboard: live::SharedKeyboard,
+    settings: Arc<Mutex<HubSettings>>,
+    games: Arc<Mutex<Vec<GameRule>>>,
 }
 
 impl Default for HubState {
@@ -34,6 +52,10 @@ impl Default for HubState {
             client: Mutex::new(None),
             macro_path: Mutex::new(user_data.join("macros.json").to_string_lossy().into_owned()),
             macros: Mutex::new(Vec::new()),
+            mouse: Arc::new(Mutex::new(None)),
+            keyboard: Arc::new(Mutex::new(None)),
+            settings: Arc::new(Mutex::new(live::read_settings())),
+            games: Arc::new(Mutex::new(live::initial_game_rules())),
         }
     }
 }
@@ -79,9 +101,27 @@ const PAGES: &[PageInfo] = &[
         group: "Device",
     },
     PageInfo {
+        id: "mouse",
+        label: "Mouse",
+        subtitle: "DPI, polling rate, buttons and sensor settings",
+        group: "Device",
+    },
+    PageInfo {
+        id: "keyboard",
+        label: "Keyboard",
+        subtitle: "Key remap, layers, magnetic switches and backlight",
+        group: "Device",
+    },
+    PageInfo {
         id: "lighting",
         label: "Light Show",
         subtitle: "Keyboard backlight and effects",
+        group: "Device",
+    },
+    PageInfo {
+        id: "dotscreen",
+        label: "Dot Screen",
+        subtitle: "6x6 RGB pixel animations for keyboards with a dot-matrix display",
         group: "Device",
     },
     PageInfo {
@@ -93,19 +133,31 @@ const PAGES: &[PageInfo] = &[
     PageInfo {
         id: "audio",
         label: "Audio",
-        subtitle: "THX spatial audio properties",
+        subtitle: "Headset EQ, sidetone and THX spatial audio",
+        group: "Device",
+    },
+    PageInfo {
+        id: "games",
+        label: "Game Mode",
+        subtitle: "Switch mouse profiles when a game is in focus",
+        group: "Device",
+    },
+    PageInfo {
+        id: "pcscript",
+        label: "PC Script",
+        subtitle: "Lua scripts that automate mouse and keyboard input",
         group: "Device",
     },
     PageInfo {
         id: "wallpapers",
         label: "Background Theme",
-        subtitle: "Cloud wallpaper catalogue",
+        subtitle: "Live desktop wallpapers for every monitor",
         group: "Library",
     },
     PageInfo {
         id: "music",
-        label: "Music Score Tool",
-        subtitle: "Legacy music rhythm service",
+        label: "Music Rhythm",
+        subtitle: "Keyboard lighting and wallpapers that dance to your music",
         group: "Library",
     },
     PageInfo {
@@ -130,6 +182,12 @@ const PAGES: &[PageInfo] = &[
         id: "drivers",
         label: "Drivers",
         subtitle: "Driver packages and firmware",
+        group: "System",
+    },
+    PageInfo {
+        id: "toolbar",
+        label: "Selection Toolbar",
+        subtitle: "Translate, summarize or search any selected text",
         group: "System",
     },
     PageInfo {
@@ -176,15 +234,37 @@ fn parse_report(text: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+fn resolve_asar_path() -> PathBuf {
+    let primary = PathBuf::from(DEFAULT_ASAR);
+    if primary.exists() {
+        return primary;
+    }
+    let fallback = PathBuf::from(FALLBACK_ASAR);
+    if fallback.exists() {
+        return fallback;
+    }
+    primary
+}
+
 #[tauri::command]
-fn app_info() -> Value {
+fn app_info(state: State<'_, HubState>) -> Value {
     let update_host = atk_endpoints::updater_feed_url();
+    let user_data = user_data_dir();
+    let macro_path = state
+        .macro_path
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_else(|_| user_data.join("macros.json").to_string_lossy().into_owned());
     json!({
         "name": "ATK HUB",
         "version": env!("CARGO_PKG_VERSION"),
         "engine": "Tauri + Rust",
         "updateHost": update_host,
-        "userData": user_data_dir().to_string_lossy(),
+        "userData": user_data.to_string_lossy(),
+        "configPath": user_data.join("config.json").to_string_lossy(),
+        "petPath": user_data.join("wooden-fish.json").to_string_lossy(),
+        "macroPath": macro_path,
+        "asarPath": resolve_asar_path().to_string_lossy(),
         "pages": PAGES,
     })
 }
@@ -205,8 +285,22 @@ fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn window_close(window: tauri::Window) -> Result<(), String> {
-    window.close().map_err(|error| error.to_string())
+fn window_close(window: tauri::Window, state: State<'_, HubState>) -> Result<(), String> {
+    let to_tray = state
+        .settings
+        .lock()
+        .map(|settings| settings.close_minimize_tray)
+        .unwrap_or(true);
+    if to_tray {
+        return window.hide().map_err(|error| error.to_string());
+    }
+    window.app_handle().exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -275,12 +369,17 @@ fn asar_manifest(path: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn default_asar_path() -> String {
-    DEFAULT_ASAR.to_owned()
+    resolve_asar_path().to_string_lossy().into_owned()
 }
 
 #[tauri::command]
 fn config_load(path: String) -> Result<String, String> {
-    let config = Config::parse(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
+    let target = if path.trim().is_empty() {
+        user_data_dir().join("config.json")
+    } else {
+        PathBuf::from(&path)
+    };
+    let config = Config::parse(&fs::read_to_string(&target).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
     config.to_json().map_err(|error| error.to_string())
 }
@@ -299,11 +398,16 @@ fn config_apply(
         .set(&key, parsed)
         .map_err(|error| error.to_string())?;
     let output = config.to_json().map_err(|error| error.to_string())?;
-    if save.unwrap_or(false) && !path.is_empty() {
-        if let Some(parent) = Path::new(&path).parent() {
+    if save.unwrap_or(false) {
+        let target = if path.trim().is_empty() {
+            user_data_dir().join("config.json")
+        } else {
+            PathBuf::from(&path)
+        };
+        if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        fs::write(&path, &output).map_err(|error| error.to_string())?;
+        fs::write(&target, &output).map_err(|error| error.to_string())?;
     }
     Ok(output)
 }
@@ -407,28 +511,98 @@ fn agent_disconnect(state: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn connected_client(
+fn discover_pipe_name() -> Result<PipeName, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    if Path::new(SERVICE_EXE).exists()
+        && let Ok(output) = std::process::Command::new(SERVICE_EXE)
+            .arg("agent-pipe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if let Ok(pipe) = PipeName::parse(&name) {
+            return Ok(pipe);
+        }
+    }
+    PipeName::parse("atk-hub-agent-session-1").map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn ensure_connected(
     state: &HubState,
 ) -> Result<std::sync::MutexGuard<'_, Option<AgentClient>>, String> {
-    let guard = state
+    let mut guard = state
         .client
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
     if guard.is_none() {
-        return Err("Connect to the agent first".to_owned());
+        let pipe = discover_pipe_name()?;
+        let client = AgentClient::connect(&pipe).map_err(|error| error.to_string())?;
+        *guard = Some(client);
     }
     Ok(guard)
+}
+
+#[tauri::command]
+fn agent_auto_connect(state: State<'_, HubState>) -> Value {
+    #[cfg(windows)]
+    {
+        match discover_pipe_name() {
+            Ok(pipe) => match ensure_connected(&state) {
+                Ok(_) => json!({
+                    "connected": true,
+                    "pipe": pipe.as_str(),
+                    "windowsPath": pipe.windows_path(),
+                }),
+                Err(error) => json!({
+                    "connected": false,
+                    "pipe": pipe.as_str(),
+                    "error": error,
+                }),
+            },
+            Err(error) => json!({
+                "connected": false,
+                "error": error,
+            }),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        json!({
+            "connected": false,
+            "error": "agent pipe is only available on Windows",
+        })
+    }
 }
 
 #[cfg(windows)]
 #[tauri::command]
 fn device_list(state: State<'_, HubState>) -> Result<Value, String> {
-    let guard = connected_client(&state)?;
-    guard
-        .as_ref()
-        .expect("checked")
-        .request("device.list", Value::Null)
-        .map_err(|error| error.to_string())
+    let result = {
+        let guard = ensure_connected(&state)?;
+        guard
+            .as_ref()
+            .expect("checked")
+            .request("device.list", Value::Null)
+    };
+    match result {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            *state
+                .client
+                .lock()
+                .map_err(|_| "state lock poisoned".to_owned())? = None;
+            let guard = ensure_connected(&state)?;
+            guard
+                .as_ref()
+                .expect("checked")
+                .request("device.list", Value::Null)
+                .map_err(|error| error.to_string())
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -440,7 +614,7 @@ fn device_list(_state: State<'_, HubState>) -> Result<Value, String> {
 #[cfg(windows)]
 #[tauri::command]
 fn device_control(args: DeviceControlArgs, state: State<'_, HubState>) -> Result<Value, String> {
-    let guard = connected_client(&state)?;
+    let guard = ensure_connected(&state)?;
     let client = guard.as_ref().expect("checked");
     match args.operation.as_str() {
         "connect" => client
@@ -530,16 +704,8 @@ fn audio_spatial(product: String, enabled: bool) -> Result<String, String> {
     Ok("Spatial setting updated".to_owned())
 }
 
-#[tauri::command]
-fn keymaps() -> Result<Vec<String>, String> {
-    let entries =
-        atk_features::list_keymaps(Path::new(DEFAULT_ASAR)).map_err(|error| error.to_string())?;
-    Ok(entries.into_iter().map(|entry| entry.name).collect())
-}
-
-#[tauri::command]
-fn lighting_report(document: String) -> Result<Vec<u8>, String> {
-    let config = Config::parse(&document).map_err(|error| error.to_string())?;
+fn lighting_from_document(document: &str) -> Result<Lighting, String> {
+    let config = Config::parse(document).map_err(|error| error.to_string())?;
     let number = |key: &str| -> u8 {
         config
             .get(key)
@@ -553,8 +719,49 @@ fn lighting_report(document: String) -> Result<Vec<u8>, String> {
         green: number("green"),
         blue: number("blue"),
         brightness: number("brightness"),
+    })
+}
+
+#[tauri::command]
+fn keymaps() -> Result<Vec<String>, String> {
+    let entries =
+        atk_features::list_keymaps(&resolve_asar_path()).map_err(|error| error.to_string())?;
+    Ok(entries.into_iter().map(|entry| entry.name).collect())
+}
+
+#[tauri::command]
+fn lighting_report(document: String) -> Result<Vec<u8>, String> {
+    Ok(lighting_from_document(&document)?.report())
+}
+
+#[tauri::command]
+fn lighting_apply(
+    vendor_id: String,
+    product_id: String,
+    document: String,
+    state: State<'_, HubState>,
+) -> Result<Value, String> {
+    let report = lighting_from_document(&document)?.report();
+    #[cfg(windows)]
+    {
+        let guard = ensure_connected(&state)?;
+        let client = guard.as_ref().expect("checked");
+        client
+            .connect_device(&DeviceId::new(
+                parse_id(&vendor_id)?,
+                parse_id(&product_id)?,
+            ))
+            .map_err(|error| error.to_string())?;
+        let written = client
+            .write_report(&report)
+            .map_err(|error| error.to_string())?;
+        Ok(json!({ "report": report, "result": written }))
     }
-    .report())
+    #[cfg(not(windows))]
+    {
+        let _ = (vendor_id, product_id, state, report);
+        Err("lighting apply is only available on Windows".to_owned())
+    }
 }
 
 #[tauri::command]
@@ -599,41 +806,86 @@ fn macros_save(state: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn macros_add(name: String, keys: String, state: State<'_, HubState>) -> Result<Value, String> {
-    let steps = keys
-        .split(',')
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(|key| MacroStep {
-            key: key.to_owned(),
-            delay_ms: 50,
-        })
-        .collect();
+fn macros_add(
+    name: String,
+    keys: Option<String>,
+    steps: Option<String>,
+    repeat_mode: Option<RepeatMode>,
+    repeat_count: Option<u32>,
+    index: Option<usize>,
+    state: State<'_, HubState>,
+) -> Result<Value, String> {
+    let steps: Vec<MacroStep> = match steps.filter(|text| !text.trim().is_empty()) {
+        Some(json) => serde_json::from_str(&json).map_err(|error| error.to_string())?,
+        None => keys
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(|key| MacroStep::press(key, 50))
+            .collect(),
+    };
+    if steps.is_empty() {
+        return Err("a macro needs at least one step".to_owned());
+    }
+    let entry = Macro {
+        name,
+        steps,
+        repeat_mode: repeat_mode.unwrap_or_default(),
+        repeat_count: repeat_count.unwrap_or(1).max(1),
+    };
     let mut macros = state
         .macros
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    macros.push(Macro { name, steps });
+    match index {
+        Some(index) if index < macros.len() => macros[index] = entry,
+        _ => macros.push(entry),
+    }
     serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn macros_run(index: usize, state: State<'_, HubState>) -> Result<String, String> {
+fn macros_list(state: State<'_, HubState>) -> Result<Value, String> {
     let macros = state
         .macros
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    let macro_def = macros
-        .get(index)
-        .ok_or_else(|| "macro not found".to_owned())?;
-    for step in &macro_def.steps {
-        let sequence =
-            atk_input::KeySequence::from_str(&step.key).map_err(|error| error.to_string())?;
-        atk_input::KeyInjector
-            .press(&sequence)
-            .map_err(|error| error.to_string())?;
+    serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn macros_delete(index: usize, state: State<'_, HubState>) -> Result<Value, String> {
+    let mut macros = state
+        .macros
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    if index >= macros.len() {
+        return Err("macro not found".to_owned());
     }
-    Ok(format!("Ran macro {}", macro_def.name))
+    macros.remove(index);
+    serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn macros_run(index: usize, state: State<'_, HubState>) -> Result<String, String> {
+    let macro_def = state
+        .macros
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?
+        .get(index)
+        .cloned()
+        .ok_or_else(|| "macro not found".to_owned())?;
+    let repeat = match macro_def.repeat_mode {
+        RepeatMode::Count => macro_def.repeat_count,
+        RepeatMode::WhileHeld | RepeatMode::Toggle => 1,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        live::run_steps(&macro_def.steps, repeat)?;
+        Ok(format!("Ran macro {}", macro_def.name))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -647,21 +899,16 @@ fn music_stop() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn pets_load(path: String) -> Result<Value, String> {
-    let config =
-        atk_features::load_pet_settings(Path::new(&path)).map_err(|error| error.to_string())?;
-    Ok(json!({
-        "enabled": atk_features::pet_enabled(&config, "enabled"),
-        "visible": atk_features::pet_enabled(&config, "petVisible"),
-        "sound": atk_features::pet_enabled(&config, "sound"),
-    }))
-}
-
-#[tauri::command]
 fn plugins_list() -> Result<Value, String> {
     let plugins =
         atk_features::list_plugins(&user_data_dir()).map_err(|error| error.to_string())?;
     serde_json::to_value(plugins).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn plugins_remove(id: String) -> Result<Value, String> {
+    atk_features::remove_plugin(&user_data_dir(), &id).map_err(|error| error.to_string())?;
+    plugins_list()
 }
 
 #[tauri::command]
@@ -674,6 +921,162 @@ fn plugins_install(
     let path = atk_features::install_bundle(&url, &id, &version, &sha256, &user_data_dir())
         .map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn plugin_market_catalog() -> Value {
+    let url = atk_endpoints::plugin_market_list_url();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(8))
+        .build();
+    if let Ok(resp) = agent.get(&url).call()
+        && let Ok(body) = resp.into_json::<Value>()
+    {
+        let items = body
+            .get("data")
+            .and_then(|d| {
+                d.as_array()
+                    .or_else(|| d.get("list").and_then(Value::as_array))
+            })
+            .or_else(|| body.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !items.is_empty() {
+            return json!({ "source": "cloud", "url": url, "items": items });
+        }
+    }
+    json!({
+        "source": "builtin",
+        "url": url,
+        "items": [
+            {
+                "id": "pc-script",
+                "name": "PC Script",
+                "version": "1.0.0",
+                "description": "Lua scripting engine for keyboard and mouse automation.",
+                "builtinPage": "pcscript",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("pc-script"),
+            },
+            {
+                "id": "floating-selection",
+                "name": "Selection Toolbar",
+                "version": "1.0.0",
+                "description": "Floating AI translate, summarize, polish and search bar for selected text.",
+                "builtinPage": "toolbar",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("floating-selection"),
+            },
+            {
+                "id": "wooden-fish",
+                "name": "Wooden Fish & Desktop Pet",
+                "version": "1.0.0",
+                "description": "Merit counter overlay and interactive desktop companion.",
+                "builtinPage": "pets",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("wooden-fish"),
+            },
+            {
+                "id": "music-rhythm",
+                "name": "Music Rhythm & Practice",
+                "version": "1.0.0",
+                "description": "Real-time audio spectrum lighting and background key practice.",
+                "builtinPage": "music",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("music-rhythm"),
+            },
+        ]
+    })
+}
+
+#[tauri::command]
+fn plugin_renderer_open(app: tauri::AppHandle, kind: String) -> Result<String, String> {
+    let plugins =
+        atk_features::list_plugins(&user_data_dir()).map_err(|error| error.to_string())?;
+    let entry = plugins
+        .into_iter()
+        .find(|p| match kind.as_str() {
+            "floating-selection" => p.floating,
+            "pc-script" => p.pc_script,
+            _ => p.id == kind,
+        })
+        .ok_or_else(|| format!("no installed plugin renderer found for {kind}"))?;
+
+    let index_html = entry.path.join("index.html");
+    let target = if index_html.is_file() {
+        index_html
+    } else {
+        let host = entry.path.join("atk-renderer.html");
+        let script_name = fs::read_dir(&entry.path)
+            .ok()
+            .and_then(|mut it| {
+                it.find_map(|e| {
+                    let name = e.ok()?.file_name().to_string_lossy().into_owned();
+                    let lower = name.to_ascii_lowercase();
+                    if (kind == "floating-selection"
+                        && lower.starts_with("floating-selection")
+                        && lower.ends_with(".js"))
+                        || (kind == "pc-script" && lower == "pc-script.js")
+                        || lower.ends_with(".js")
+                    {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or_else(|| format!("no renderer script found in {}", entry.path.display()))?;
+        let html = format!(
+            "<!doctype html><html><head><meta charset='utf-8'><title>ATK Plugin · {kind}</title></head><body><div id='app'></div><script type='module' src='./{script_name}'></script></body></html>"
+        );
+        fs::write(&host, html).map_err(|error| error.to_string())?;
+        host
+    };
+
+    let label = format!(
+        "plugin-{}",
+        kind.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect::<String>()
+    );
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(target.to_string_lossy().into_owned());
+    }
+    let file_url = format!("file:///{}", target.to_string_lossy().replace('\\', "/"));
+    let parsed = tauri::Url::parse(&file_url).map_err(|error| error.to_string())?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title(format!("ATK Plugin · {kind}"))
+        .inner_size(960.0, 680.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn system_audio_get() -> Result<Value, String> {
+    let state = atk_input::audio::system_audio_state().map_err(|error| error.to_string())?;
+    serde_json::to_value(state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn system_audio_set_volume(volume: u32) -> Result<Value, String> {
+    atk_input::audio::set_master_volume(volume).map_err(|error| error.to_string())?;
+    system_audio_get()
+}
+
+#[tauri::command]
+fn system_audio_set_muted(muted: bool) -> Result<Value, String> {
+    atk_input::audio::set_muted(muted).map_err(|error| error.to_string())?;
+    system_audio_get()
+}
+
+#[tauri::command]
+fn apps_list() -> Result<Value, String> {
+    serde_json::to_value(atk_input::apps::list_installed_apps()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn apps_pick_exe() -> Result<Value, String> {
+    let picked = atk_input::apps::pick_executable().map_err(|error| error.to_string())?;
+    serde_json::to_value(picked).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -720,6 +1123,7 @@ pub fn run() {
             agent_encode,
             agent_decode,
             agent_validate_pipe,
+            agent_auto_connect,
             agent_connect,
             agent_request,
             agent_disconnect,
@@ -731,24 +1135,179 @@ pub fn run() {
             audio_spatial,
             keymaps,
             lighting_report,
+            lighting_apply,
+            macros_list,
             macros_load,
             macros_path,
             macros_save,
             macros_add,
+            macros_delete,
             macros_run,
             music_status,
             music_stop,
-            pets_load,
+            live::pets_load,
+            live::pets_save,
+            overlay::overlay_state,
+            pcscript::pc_script_get_state,
+            pcscript::pc_script_save_and_apply,
+            pcscript::pc_script_validate,
+            pcscript::pc_script_stop,
+            pcscript::pc_script_logs,
+            pcscript::pc_script_clear_logs,
+            pcscript::pc_script_probe_keys,
+            pcscript::pc_script_debug_move,
+            pcscript::pc_script_export,
+            overlay::woodenfish_tap,
+            overlay::woodenfish_set,
+            overlay::woodenfish_sound_get,
+            overlay::woodenfish_sound_set,
+            overlay::desktop_pet_set,
+            overlay::desktop_pet_reset_position,
+            overlay::desktop_pet_sprite,
+            overlay::desktop_pet_upload,
+            rhythm::rhythm_get,
+            rhythm::rhythm_set,
+            rhythm::rhythm_start,
+            rhythm::rhythm_stop,
+            livewall::livewall_list,
+            livewall::livewall_download,
+            livewall::livewall_cancel,
+            livewall::livewall_apply,
+            livewall::livewall_clear,
+            livewall::livewall_delete,
+            livewall::livewall_style,
+            livewall::livewall_import,
+            livewall::livewall_set_system,
+            dotscreen::dotscreen_status,
+            dotscreen::dotscreen_start,
+            dotscreen::dotscreen_stop,
+            dotscreen::dotscreen_save,
+            dotscreen::dotscreen_delete,
+            dotscreen::dotscreen_auto_reconnect,
+            practice::practice_status,
+            practice::practice_start,
+            practice::practice_stop,
+            firmware::firmware_check,
+            firmware::firmware_download,
+            firmware::firmware_flash,
+            thx_driver::headset_driver_status,
+            thx_driver::headset_driver_prepare,
+            thx_driver::headset_driver_action,
+            plugin_market_catalog,
+            plugin_renderer_open,
+            system_audio_get,
+            system_audio_set_volume,
+            system_audio_set_muted,
+            apps_list,
+            apps_pick_exe,
+            live::notification_show,
+            live::toast_hide,
+            toolbar::toolbar_get,
+            toolbar::toolbar_set,
+            toolbar::toolbar_preview,
+            toolbar::toolbar_hide,
+            toolbar::toolbar_copy,
+            toolbar::toolbar_action,
+            live::mouse_list,
+            live::kb_list,
+            headset::headset_list,
+            headset::headset_bolutek_state,
+            headset::headset_bolutek_apply,
+            headset::headset_bolutek_peq,
+            headset::headset_bolutek_set_peq,
+            headset::headset_kt_state,
+            headset::headset_kt_apply,
+            headset::headset_factory_reset,
+            live::kb_macros,
+            live::kb_advanced_keys,
+            live::kb_set_dks,
+            live::kb_set_advanced_key,
+            live::kb_set_tap_dance,
+            live::kb_set_macros,
+            live::kb_snapshot,
+            live::kb_keymap,
+            live::kb_set_key,
+            live::kb_reset_keymap,
+            live::kb_apply,
+            live::kb_actuation,
+            live::kb_set_actuation,
+            live::kb_rapid_trigger,
+            live::kb_set_rapid_trigger,
+            live::mouse_snapshot,
+            live::mouse_apply,
+            live::mouse_button,
+            live::mouse_profile,
+            live::mouse_pair,
+            live::mouse_pair_status,
+            live::mouse_reset,
+            live::mouse_macro_read,
+            live::mouse_macro_write,
+            live::mouse_shortcut_read,
+            live::mouse_shortcut_write,
+            live::keymap_load,
+            live::system_mouse_get,
+            live::system_mouse_set,
+            live::hub_settings_get,
+            live::hub_settings_set,
+            live::lock_hint_hide,
+            live::game_rules_get,
+            live::game_rules_set,
+            live::foreground_process,
+            live::wallpaper_apply,
+            live::update_download,
+            live::installer_launch,
+            live::driver_install,
+            live::macros_run_steps,
+            app_exit,
             plugins_list,
             plugins_install,
+            plugins_remove,
             update_check,
             driver_metadata,
             driver_prepare,
         ])
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        live::toggle_main(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 window.set_shadow(true)?;
+                if std::env::args().any(|arg| arg == "--hidden") {
+                    window.hide()?;
+                }
             }
+            live::build_tray(app)?;
+            live::build_lock_overlay(app)?;
+            live::build_toast_overlay(app)?;
+            overlay::build_overlays(app)?;
+            overlay::spawn_input_watch(app.handle().clone());
+            toolbar::build_toolbar(app)?;
+            livewall::restore(app.handle().clone());
+            rhythm::autostart(app.handle());
+            dotscreen::restore(app.handle().clone());
+            toolbar::spawn_selection_watch(app.handle().clone());
+            std::thread::spawn(pcscript::resume_on_startup);
+            let state = app.state::<HubState>();
+            let settings = state
+                .settings
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default();
+            live::apply_hotkey(app.handle(), &settings);
+            live::spawn_lock_hint(app.handle().clone(), Arc::clone(&state.settings));
+            live::spawn_game_switch(
+                app.handle().clone(),
+                Arc::clone(&state.mouse),
+                Arc::clone(&state.keyboard),
+                Arc::clone(&state.settings),
+                Arc::clone(&state.games),
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

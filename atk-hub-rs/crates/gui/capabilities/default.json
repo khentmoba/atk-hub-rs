@@ -3,9 +3,15 @@
   "identifier": "default",
   "description": "Default permissions for the ATK HUB main window",
   "windows": [
-    "main"
+    "main",
+    "lockhint",
+    "woodenfish",
+    "pet",
+    "toolbar",
+    "toast"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-start-dragging"
   ]
 }

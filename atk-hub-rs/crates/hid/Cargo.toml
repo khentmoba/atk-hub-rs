@@ -1,0 +1,18 @@
+[package]
+name = "atk-hid"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Direct HID protocol drivers for ATK devices (COMPX mice)"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

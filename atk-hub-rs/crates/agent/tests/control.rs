@@ -95,8 +95,10 @@ fn validates_report_length_and_scope_locally() {
         .first(false)
         .single()
         .expect("create control pipe");
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let server_thread = thread::spawn(move || {
-        let _ = server.wait_ms(2_000);
+        let _connected = server.wait_ms(5_000);
+        let _ = done_rx.recv_timeout(Duration::from_secs(5));
     });
     let client =
         AgentClient::connect(&PipeName::parse(&name).expect("valid pipe")).expect("connect");
@@ -107,5 +109,7 @@ fn validates_report_length_and_scope_locally() {
             .set_bindings(&DeviceId::new(1, 1), "bad scope", &[])
             .is_err()
     );
+    drop(client);
+    let _ = done_tx.send(());
     server_thread.join().expect("server thread");
 }
