@@ -168,6 +168,136 @@ fn hidden_powershell(script: &str) -> Result<bool, InstallError> {
     }
 }
 
+fn run_powershell_file(path: &Path) -> Result<bool, InstallError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let status = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()?;
+        Ok(status.success())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Ok(false)
+    }
+}
+
+/// Runs the setup wizard and returns the chosen destination.
+///
+/// Returns `None` when the user cancels. The wizard is a WinForms dialog
+/// generated from the standard Windows assemblies, so no installer license is
+/// involved.
+///
+/// # Errors
+///
+/// Returns an error if the helper script cannot be written or run.
+pub fn run_wizard(default: &Path, logo: &Path) -> Result<Option<PathBuf>, InstallError> {
+    let response = std::env::temp_dir().join("atk-hub-wizard-response.txt");
+    let script_path = std::env::temp_dir().join("atk-hub-wizard.ps1");
+    let _ = fs::remove_file(&response);
+
+    let script = format!(
+        r#"Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$image = [System.Drawing.Image]::FromFile('{logo}')
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'ATK HUB Setup'
+$form.Width = 470
+$form.Height = 340
+$form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$picture = New-Object System.Windows.Forms.PictureBox
+$picture.Image = $image
+$picture.Location = New-Object System.Drawing.Point(24, 24)
+$picture.Size = New-Object System.Drawing.Size(120, 120)
+$picture.SizeMode = 'Zoom'
+$form.Controls.Add($picture)
+$title = New-Object System.Windows.Forms.Label
+$title.Text = 'ATK HUB installer'
+$title.Location = New-Object System.Drawing.Point(165, 30)
+$title.Size = New-Object System.Drawing.Size(280, 30)
+$title.Font = New-Object System.Drawing.Font('Segoe UI', 16, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($title)
+$subtitle = New-Object System.Windows.Forms.Label
+$subtitle.Text = 'Rust port of ATK HUB 3.2.31'
+$subtitle.Location = New-Object System.Drawing.Point(165, 70)
+$subtitle.Size = New-Object System.Drawing.Size(280, 25)
+$form.Controls.Add($subtitle)
+$prompt = New-Object System.Windows.Forms.Label
+$prompt.Text = 'Destination folder:'
+$prompt.Location = New-Object System.Drawing.Point(24, 165)
+$prompt.Size = New-Object System.Drawing.Size(200, 22)
+$form.Controls.Add($prompt)
+$destination = New-Object System.Windows.Forms.TextBox
+$destination.Location = New-Object System.Drawing.Point(24, 190)
+$destination.Size = New-Object System.Drawing.Size(380, 25)
+$destination.Text = '{default}'
+$form.Controls.Add($destination)
+$browse = New-Object System.Windows.Forms.Button
+$browse.Text = 'Browse...'
+$browse.Location = New-Object System.Drawing.Point(412, 188)
+$browse.Size = New-Object System.Drawing.Size(85, 28)
+$browse.Add_Click({{
+  $folder = New-Object System.Windows.Forms.FolderBrowserDialog
+  $folder.SelectedPath = $destination.Text
+  if ($folder.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
+    $destination.Text = $folder.SelectedPath
+  }}
+}})
+$form.Controls.Add($browse)
+$install = New-Object System.Windows.Forms.Button
+$install.Text = 'Install'
+$install.Location = New-Object System.Drawing.Point(255, 265)
+$install.Size = New-Object System.Drawing.Size(100, 30)
+$install.Add_Click({{
+  $script:answer = $destination.Text
+  $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+  $form.Close()
+}})
+$form.Controls.Add($install)
+$cancel = New-Object System.Windows.Forms.Button
+$cancel.Text = 'Cancel'
+$cancel.Location = New-Object System.Drawing.Point(365, 265)
+$cancel.Size = New-Object System.Drawing.Size(100, 30)
+$cancel.Add_Click({{
+  $script:answer = ''
+  $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+  $form.Close()
+}})
+$form.Controls.Add($cancel)
+$script:answer = ''
+[void]$form.ShowDialog()
+[System.IO.File]::WriteAllText('{response}', $script:answer)
+$image.Dispose()
+"#,
+        logo = quote(logo),
+        default = quote(default),
+        response = quote(&response),
+    );
+    fs::write(&script_path, script)?;
+    run_powershell_file(&script_path)?;
+
+    if !response.exists() {
+        return Ok(None);
+    }
+    let chosen = fs::read_to_string(response)?;
+    if chosen.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(PathBuf::from(chosen)))
+}
+
 /// Appends a line to the installer log in the system temp directory.
 pub fn log_line(line: &str) {
     use std::io::Write;

@@ -174,6 +174,8 @@ is a 16-page native eframe GUI over the ported core crates, with live agent,
 service, HID, wallpaper, THX, macro, plugin, updater and driver functionality.
 No system state is changed by tests; installation and key injection require an
 explicit GUI action. A license-free per-user `setup.exe` installer is provided
-(`installer/build-package.ps1` builds `installer-package/` and
-`atk-hub-rs-portable.zip`); install/uninstall were verified against a temporary
-target directory.
+(`installer/build-package.ps1` builds `installer-package/` and a single-file
+`setup.exe`; `installer/build-nsis.ps1` builds the normal NSIS wizard installer
+`ATK-HUB-setup.exe`, modeled on SlickShot's Windows setup. Both install/uninstall
+paths were verified against a temporary target directory, including the NSIS
+`/S` silent switch and registry cleanup.

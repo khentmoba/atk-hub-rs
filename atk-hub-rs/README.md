@@ -49,20 +49,22 @@ cargo run -p atk-cli --bin atk-hub-cli -- decode '{"id":3,"ok":true,"result":[]}
 
 ## Installer (no license or third-party tooling required)
 
-`setup.exe` is a single-file Rust installer built from the standard library only.
-It carries the app binaries and logo inside itself, so no ZIP or other files are
-needed.
+The normal installer is NSIS-based, like SlickShot's Windows setup. It has a
+welcome page, a destination folder page, a finish page, a Start Menu shortcut,
+and an Add or Remove Programs entry. It installs per user with no UAC prompt.
 
 ```
-powershell -File installer\build-package.ps1   # produces .\setup.exe and installer-package\
-setup.exe                                       # installs to %LOCALAPPDATA%\AtkVhub with a Start Menu shortcut
-setup.exe --no-shortcut --target C:\Some\Folder
-setup.exe --uninstall
+powershell -File installer\build-package.ps1                    # stages binaries
+powershell -File installer\build-nsis.ps1 -Version 0.1.5        # builds ATK-HUB-setup.exe
+ATK-HUB-setup.exe /S /D=C:\Some\Folder                          # silent install
+uninstall.exe /S                                                # silent uninstall
 ```
 
-Installation is per-user, so no elevation or product key is needed;
-the optional Windows service registration remains a separate explicit command
-(`atk-hub-cli service install --app <path>`).
+A single-file `setup.exe` is also produced by `build-package.ps1`. It embeds the
+package and works without the ZIP, but it is not the standard wizard.
+
+Installation needs no license key; the optional Windows service registration
+remains a separate explicit command (`atk-hub-cli service install --app <path>`).
 
 ## Verify
 
