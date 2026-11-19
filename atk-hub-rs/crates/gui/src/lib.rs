@@ -9,12 +9,15 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
 mod dotscreen;
+mod firmware;
 mod headset;
 mod live;
 mod livewall;
 mod overlay;
 mod pcscript;
+mod practice;
 mod rhythm;
+mod thx_driver;
 mod toolbar;
 
 #[cfg(not(windows))]
@@ -921,6 +924,162 @@ fn plugins_install(
 }
 
 #[tauri::command]
+fn plugin_market_catalog() -> Value {
+    let url = atk_endpoints::plugin_market_list_url();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(8))
+        .build();
+    if let Ok(resp) = agent.get(&url).call()
+        && let Ok(body) = resp.into_json::<Value>()
+    {
+        let items = body
+            .get("data")
+            .and_then(|d| {
+                d.as_array()
+                    .or_else(|| d.get("list").and_then(Value::as_array))
+            })
+            .or_else(|| body.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if !items.is_empty() {
+            return json!({ "source": "cloud", "url": url, "items": items });
+        }
+    }
+    json!({
+        "source": "builtin",
+        "url": url,
+        "items": [
+            {
+                "id": "pc-script",
+                "name": "PC Script",
+                "version": "1.0.0",
+                "description": "Lua scripting engine for keyboard and mouse automation.",
+                "builtinPage": "pcscript",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("pc-script"),
+            },
+            {
+                "id": "floating-selection",
+                "name": "Selection Toolbar",
+                "version": "1.0.0",
+                "description": "Floating AI translate, summarize, polish and search bar for selected text.",
+                "builtinPage": "toolbar",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("floating-selection"),
+            },
+            {
+                "id": "wooden-fish",
+                "name": "Wooden Fish & Desktop Pet",
+                "version": "1.0.0",
+                "description": "Merit counter overlay and interactive desktop companion.",
+                "builtinPage": "pets",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("wooden-fish"),
+            },
+            {
+                "id": "music-rhythm",
+                "name": "Music Rhythm & Practice",
+                "version": "1.0.0",
+                "description": "Real-time audio spectrum lighting and background key practice.",
+                "builtinPage": "music",
+                "downloadUrl": atk_endpoints::plugin_market_download_url("music-rhythm"),
+            },
+        ]
+    })
+}
+
+#[tauri::command]
+fn plugin_renderer_open(app: tauri::AppHandle, kind: String) -> Result<String, String> {
+    let plugins =
+        atk_features::list_plugins(&user_data_dir()).map_err(|error| error.to_string())?;
+    let entry = plugins
+        .into_iter()
+        .find(|p| match kind.as_str() {
+            "floating-selection" => p.floating,
+            "pc-script" => p.pc_script,
+            _ => p.id == kind,
+        })
+        .ok_or_else(|| format!("no installed plugin renderer found for {kind}"))?;
+
+    let index_html = entry.path.join("index.html");
+    let target = if index_html.is_file() {
+        index_html
+    } else {
+        let host = entry.path.join("atk-renderer.html");
+        let script_name = fs::read_dir(&entry.path)
+            .ok()
+            .and_then(|mut it| {
+                it.find_map(|e| {
+                    let name = e.ok()?.file_name().to_string_lossy().into_owned();
+                    let lower = name.to_ascii_lowercase();
+                    if (kind == "floating-selection"
+                        && lower.starts_with("floating-selection")
+                        && lower.ends_with(".js"))
+                        || (kind == "pc-script" && lower == "pc-script.js")
+                        || lower.ends_with(".js")
+                    {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or_else(|| format!("no renderer script found in {}", entry.path.display()))?;
+        let html = format!(
+            "<!doctype html><html><head><meta charset='utf-8'><title>ATK Plugin · {kind}</title></head><body><div id='app'></div><script type='module' src='./{script_name}'></script></body></html>"
+        );
+        fs::write(&host, html).map_err(|error| error.to_string())?;
+        host
+    };
+
+    let label = format!(
+        "plugin-{}",
+        kind.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect::<String>()
+    );
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(target.to_string_lossy().into_owned());
+    }
+    let file_url = format!("file:///{}", target.to_string_lossy().replace('\\', "/"));
+    let parsed = tauri::Url::parse(&file_url).map_err(|error| error.to_string())?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title(format!("ATK Plugin · {kind}"))
+        .inner_size(960.0, 680.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn system_audio_get() -> Result<Value, String> {
+    let state = atk_input::audio::system_audio_state().map_err(|error| error.to_string())?;
+    serde_json::to_value(state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn system_audio_set_volume(volume: u32) -> Result<Value, String> {
+    atk_input::audio::set_master_volume(volume).map_err(|error| error.to_string())?;
+    system_audio_get()
+}
+
+#[tauri::command]
+fn system_audio_set_muted(muted: bool) -> Result<Value, String> {
+    atk_input::audio::set_muted(muted).map_err(|error| error.to_string())?;
+    system_audio_get()
+}
+
+#[tauri::command]
+fn apps_list() -> Result<Value, String> {
+    serde_json::to_value(atk_input::apps::list_installed_apps()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn apps_pick_exe() -> Result<Value, String> {
+    let picked = atk_input::apps::pick_executable().map_err(|error| error.to_string())?;
+    serde_json::to_value(picked).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn update_check() -> Result<Value, String> {
     let info = atk_features::check_update().map_err(|error| error.to_string())?;
     serde_json::to_value(info).map_err(|error| error.to_string())
@@ -1025,6 +1184,24 @@ pub fn run() {
             dotscreen::dotscreen_save,
             dotscreen::dotscreen_delete,
             dotscreen::dotscreen_auto_reconnect,
+            practice::practice_status,
+            practice::practice_start,
+            practice::practice_stop,
+            firmware::firmware_check,
+            firmware::firmware_download,
+            firmware::firmware_flash,
+            thx_driver::headset_driver_status,
+            thx_driver::headset_driver_prepare,
+            thx_driver::headset_driver_action,
+            plugin_market_catalog,
+            plugin_renderer_open,
+            system_audio_get,
+            system_audio_set_volume,
+            system_audio_set_muted,
+            apps_list,
+            apps_pick_exe,
+            live::notification_show,
+            live::toast_hide,
             toolbar::toolbar_get,
             toolbar::toolbar_set,
             toolbar::toolbar_preview,
@@ -1107,6 +1284,7 @@ pub fn run() {
             }
             live::build_tray(app)?;
             live::build_lock_overlay(app)?;
+            live::build_toast_overlay(app)?;
             overlay::build_overlays(app)?;
             overlay::spawn_input_watch(app.handle().clone());
             toolbar::build_toolbar(app)?;

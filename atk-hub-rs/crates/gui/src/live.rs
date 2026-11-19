@@ -547,24 +547,137 @@ pub fn toggle_main(app: &AppHandle) {
 ///
 /// # Errors
 ///
-/// Returns a Tauri error when the tray cannot be created.
-pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+fn tray_status_label(app: &AppHandle) -> String {
+    let state = app.state::<crate::HubState>();
+    let mouse_text = run_mouse(&state.mouse, |m| {
+        let (percent, _charging) = m.battery()?;
+        let name = atk_hid::list_mice()
+            .ok()
+            .and_then(|mut l| l.drain(..).next().map(|d| d.product))
+            .unwrap_or_else(|| "Mouse".into());
+        Ok(format!("{name} · {percent}%"))
+    })
+    .ok();
+    let kb_text = run_keyboard(&state.keyboard, |k| Ok(k.model().name.clone())).ok();
+    match (mouse_text, kb_text) {
+        (Some(m), Some(k)) => format!("{m} | {k}"),
+        (Some(m), None) => m,
+        (None, Some(k)) => k,
+        (None, None) => "ATK HUB · No direct HID device".into(),
+    }
+}
+
+fn make_tray_menu(
+    app: &AppHandle,
+    status_label: &str,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let status = MenuItem::with_id(app, "tray-status", status_label, false, None::<&str>)?;
+    let refresh = MenuItem::with_id(
+        app,
+        "tray-refresh",
+        "Refresh Device Status",
+        true,
+        None::<&str>,
+    )?;
+    let m1 = MenuItem::with_id(app, "tray-mouse-p0", "Mouse Profile 1", true, None::<&str>)?;
+    let m2 = MenuItem::with_id(app, "tray-mouse-p1", "Mouse Profile 2", true, None::<&str>)?;
+    let m3 = MenuItem::with_id(app, "tray-mouse-p2", "Mouse Profile 3", true, None::<&str>)?;
+    let m4 = MenuItem::with_id(app, "tray-mouse-p3", "Mouse Profile 4", true, None::<&str>)?;
+    let mouse_sub = Submenu::with_id_and_items(
+        app,
+        "tray-mouse-sub",
+        "Mouse Profile",
+        true,
+        &[&m1, &m2, &m3, &m4],
+    )?;
+
+    let k1 = MenuItem::with_id(app, "tray-kb-p0", "Keyboard Profile 1", true, None::<&str>)?;
+    let k2 = MenuItem::with_id(app, "tray-kb-p1", "Keyboard Profile 2", true, None::<&str>)?;
+    let k3 = MenuItem::with_id(app, "tray-kb-p2", "Keyboard Profile 3", true, None::<&str>)?;
+    let k4 = MenuItem::with_id(app, "tray-kb-p3", "Keyboard Profile 4", true, None::<&str>)?;
+    let kb_sub = Submenu::with_id_and_items(
+        app,
+        "tray-kb-sub",
+        "Keyboard Profile",
+        true,
+        &[&k1, &k2, &k3, &k4],
+    )?;
+
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
     let show = MenuItem::with_id(app, "show-main", "Show ATK HUB", true, None::<&str>)?;
     let exit = MenuItem::with_id(app, "exit-app", "Exit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &exit])?;
+    Menu::with_items(
+        app,
+        &[
+            &status, &refresh, &sep1, &mouse_sub, &kb_sub, &sep2, &show, &exit,
+        ],
+    )
+}
+
+/// Rebuilds the tray menu with live device battery and connection status.
+pub fn refresh_tray_menu(app: &AppHandle) {
+    let label = tray_status_label(app);
+    if let Some(tray) = app.tray_by_id("main")
+        && let Ok(menu) = make_tray_menu(app, &label)
+    {
+        let _ = tray.set_menu(Some(menu));
+        let _ = tray.set_tooltip(Some(label));
+    }
+}
+
+/// Returns a Tauri error when the tray cannot be created.
+pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let menu = make_tray_menu(app.handle(), "ATK HUB · Ready")?;
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("ATK HUB")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show-main" => show_main(app),
-            "exit-app" => {
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if id == "show-main" {
+                show_main(app);
+            } else if id == "exit-app" {
                 crate::overlay::flush_now();
                 app.exit(0);
+            } else if id == "tray-refresh" {
+                let handle = app.clone();
+                std::thread::spawn(move || refresh_tray_menu(&handle));
+            } else if let Some(rest) = id.strip_prefix("tray-mouse-p")
+                && let Ok(profile) = rest.parse::<u8>()
+            {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let state = handle.state::<crate::HubState>();
+                    let ok = run_mouse(&state.mouse, |m| m.set_profile(profile)).is_ok();
+                    if ok {
+                        show_toast(
+                            &handle,
+                            "Mouse Profile",
+                            &format!("Switched to Profile {}", profile + 1),
+                        );
+                        refresh_tray_menu(&handle);
+                    }
+                });
+            } else if let Some(rest) = id.strip_prefix("tray-kb-p")
+                && let Ok(profile) = rest.parse::<u8>()
+            {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    let state = handle.state::<crate::HubState>();
+                    let ok = run_keyboard(&state.keyboard, |k| k.set_profile(profile)).is_ok();
+                    if ok {
+                        show_toast(
+                            &handle,
+                            "Keyboard Profile",
+                            &format!("Switched to Profile {}", profile + 1),
+                        );
+                        refresh_tray_menu(&handle);
+                    }
+                });
             }
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -580,7 +693,65 @@ pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         builder = builder.icon(icon);
     }
     builder.build(app)?;
+    let handle = app.handle().clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        refresh_tray_menu(&handle);
+    });
     Ok(())
+}
+
+/// Creates the hidden, non-focusable desktop toast notification overlay window.
+///
+/// # Errors
+///
+/// Returns a Tauri error when the window cannot be created.
+pub fn build_toast_overlay(app: &tauri::App) -> tauri::Result<()> {
+    let (width, height) = (320.0, 86.0);
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, "toast", tauri::WebviewUrl::App("toast.html".into()))
+            .title("ATK HUB Notification")
+            .inner_size(width, height)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .visible(false);
+    let window = builder.build()?;
+    if let Some(monitor) = window.primary_monitor()? {
+        let scale = monitor.scale_factor();
+        let size = monitor.size().to_logical::<f64>(scale);
+        window.set_position(tauri::LogicalPosition::new(
+            size.width - width - 20.0,
+            size.height - height - 64.0,
+        ))?;
+    }
+    window.set_ignore_cursor_events(true)?;
+    Ok(())
+}
+
+/// Shows a non-intrusive desktop toast notification (`notification:show`).
+pub fn show_toast(app: &AppHandle, title: &str, body: &str) {
+    let payload = json!({ "title": title, "body": body, "durationMs": 3500 });
+    let _ = app.emit("notification:show", payload.clone());
+    if let Some(overlay) = app.get_webview_window("toast") {
+        let _ = overlay.emit("notification:show", payload);
+        let _ = overlay.show();
+    }
+}
+
+#[tauri::command]
+pub fn notification_show(app: AppHandle, title: String, body: String) {
+    show_toast(&app, &title, &body);
+}
+
+#[tauri::command]
+pub fn toast_hide(app: AppHandle) {
+    if let Some(overlay) = app.get_webview_window("toast") {
+        let _ = overlay.hide();
+    }
 }
 
 /// Polls lock keys and shows the hint overlay when one toggles.

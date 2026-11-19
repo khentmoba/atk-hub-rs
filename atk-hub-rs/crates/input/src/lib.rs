@@ -3,7 +3,10 @@
 //! Injection is only performed when the user explicitly runs a macro; tests
 //! cover parsing and sequencing, never actual input events.
 
+pub mod apps;
+pub mod audio;
 pub mod loopback;
+pub mod media;
 pub mod system;
 
 use std::str::FromStr;

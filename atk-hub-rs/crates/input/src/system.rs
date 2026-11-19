@@ -24,6 +24,27 @@ impl From<windows::core::Error> for SystemError {
     }
 }
 
+impl SystemError {
+    /// Creates a system error from a message.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+/// Polls all 256 virtual-key states using `GetAsyncKeyState`.
+#[must_use]
+pub fn poll_async_key_states() -> [bool; 256] {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    let mut states = [false; 256];
+    for (vk, slot) in states.iter_mut().enumerate().skip(1) {
+        // SAFETY: `GetAsyncKeyState` accepts any integer virtual-key code.
+        let raw = unsafe { GetAsyncKeyState(vk as i32) };
+        *slot = (raw as u16 & 0x8000) != 0;
+    }
+    states
+}
+
 const PERSIST: SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS =
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(SPIF_UPDATEINIFILE.0 | SPIF_SENDCHANGE.0);
 

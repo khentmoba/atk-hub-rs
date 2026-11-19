@@ -1,5 +1,6 @@
 import {
   mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage, liveWallCards, rhythmCards, dotScreenPage,
+  systemAudioCard, thxDriverCard, firmwareOtaCard, musicPracticeCard, pluginMarketCatalogCard,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -251,6 +252,8 @@ function renderPluginList() {
       <span><strong>${escapeHtml(plugin.id)}</strong> · v${escapeHtml(plugin.version)}${kinds.length ? ` · ${escapeHtml(kinds.join(", "))}` : ""}</span>
       <span class="actions" style="margin:0">
         <span class="chip live">Installed</span>
+        ${plugin.pc_script ? `<button class="button sm" type="button" data-plugin-renderer="pc-script">Open Renderer</button>` : ""}
+        ${plugin.floating ? `<button class="button sm" type="button" data-plugin-renderer="floating-selection">Open Renderer</button>` : ""}
         ${manage ? `<button class="button sm" type="button" data-page="${manage}">Manage</button>` : ""}
         <button class="button sm" type="button" data-plugin-remove="${escapeHtml(plugin.id)}">Remove</button>
       </span>
@@ -526,6 +529,10 @@ function audioPage() {
   return `
     ${pageHeading(state.pages.find((page) => page.id === "audio"))}
     <div id="headset" style="margin-bottom:16px">${headsetCards()}</div>
+    <div class="grid two" style="margin-bottom:16px">
+      ${systemAudioCard()}
+      ${thxDriverCard()}
+    </div>
     <div class="grid two">
       <article class="card">
         <div class="card-title"><h2>THX connection</h2><span>gRPC over TLS</span></div>
@@ -570,7 +577,8 @@ function musicPage() {
   return `
     ${pageHeading(state.pages.find((page) => page.id === "music"))}
     ${rhythmCards()}
-    <div class="grid two">
+    ${musicPracticeCard()}
+    <div class="grid two" style="margin-top:16px">
       <article class="card">
         <div class="card-title"><h2>Legacy rhythm service</h2><span id="music-status-badge">Checking…</span></div>
         <div class="actions">
@@ -625,7 +633,8 @@ function pluginsPage() {
         ${field("SHA-256", "sha256")}
         <div class="actions">${button("Install", "plugins_install", {}, { variant: "accent" })}</div>
       </article>
-    </div>`;
+    </div>
+    ${pluginMarketCatalogCard()}`;
 }
 
 function updaterPage() {
@@ -673,7 +682,8 @@ function driversPage() {
         <div class="card-title"><h2>Verified extraction</h2><span>ZIP safety checks</span></div>
         <div class="notice">Driver archives are verified against SHA-256 and extracted only after every entry path passes traversal checks.</div>
       </article>
-    </div>`;
+    </div>
+    ${firmwareOtaCard()}`;
 }
 
 function settingsPage() {
@@ -699,6 +709,9 @@ function settingsPage() {
         <div class="stat-row"><span class="stat-label">Theme</span><span class="stat-value" id="theme-name">${document.documentElement.dataset.theme === "dark" ? "Dark" : "Light"}</span></div>
         <div class="stat-row"><span class="stat-label">Scaling</span><span class="stat-value">System</span></div>
         <div class="stat-row"><span class="stat-label">Shell</span><span class="stat-value">Tauri 2</span></div>
+        <div class="actions" style="margin-top:14px">
+          <button class="button sm" type="button" data-toast-test>Test Desktop Notification</button>
+        </div>
       </article>
     </div>`;
 }

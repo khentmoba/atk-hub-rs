@@ -1001,11 +1001,13 @@ async function loadKeyboard() {
 
 export function gamesPage() {
   const rules = state.gameRules ?? [];
+  const apps = state.installedApps ?? [];
   const rows = rules.length === 0
     ? `<div class="notice">No games configured.</div>`
     : rules.map((rule, i) => `
       <div class="list-item"><span><strong>${escapeHtml(rule.exe)}</strong> → Mouse profile ${rule.profile + 1}${rule.keyboardProfile !== undefined && rule.keyboardProfile !== null ? ` · Keyboard profile ${rule.keyboardProfile + 1}` : ""}</span>
       <button class="button sm" type="button" data-game-delete="${i}">Remove</button></div>`).join("");
+  const appOpts = [["", apps.length ? `Choose from ${apps.length} installed app(s)…` : "Scan installed apps…"], ...apps.map((a) => [a.exe, `${a.name} (${a.exe})`])];
   return `
     ${pageHeading(state.pages.find((page) => page.id === "games"))}
     <div class="grid two">
@@ -1016,10 +1018,12 @@ export function gamesPage() {
       </article>
       <article class="card">
         <div class="card-title"><h2>Add game</h2><span>executable</span></div>
+        ${select("Installed app", "game-installed", appOpts, "")}
         ${field("Executable", "game-exe", "")}
         ${select("Mouse profile", "game-profile", [[0, "Profile 1"], [1, "Profile 2"], [2, "Profile 3"], [3, "Profile 4"]], 1)}
         ${select("Keyboard profile", "game-kb-profile", [["", "Don't change"], [0, "Profile 1"], [1, "Profile 2"], [2, "Profile 3"], [3, "Profile 4"]], "")}
         <div class="actions">
+          <button class="button" type="button" data-game-pick>Browse .exe…</button>
           <button class="button" type="button" data-game-capture>Pick Focused App (3 s)</button>
           <button class="button primary" type="button" data-game-add>Add Game</button>
         </div>
@@ -2091,6 +2095,225 @@ if (window.__TAURI__?.event) {
   });
 }
 
+/* -------------------------------------------- system audio, thx, ota, practice -- */
+
+export function systemAudioCard() {
+  const sa = state.systemAudio;
+  if (!sa) return `<article class="card"><div class="card-title"><h2>System Audio</h2><span>Windows Core Audio</span></div><div class="notice">Loading system audio…</div></article>`;
+  const devs = (sa.devices ?? []).map((d) => `<div class="list-item"><span>${escapeHtml(d.name)}</span><span class="chip${d.isDefault ? " live" : ""}">${d.isDefault ? "Default" : "Active"}</span></div>`).join("");
+  return `
+    <article class="card">
+      <div class="card-title"><h2>System Audio</h2><span>${escapeHtml(sa.defaultDevice ?? "Default output")}</span></div>
+      ${range("Master volume", "sa-vol", 0, 100, 1, sa.volume ?? 50, "%")}
+      ${toggle("Mute master output", "sa-mute", Boolean(sa.muted))}
+      <div class="actions">
+        <button class="button primary" type="button" data-sa-apply>Apply Volume</button>
+        <button class="button sm" type="button" data-sa-refresh>Refresh</button>
+      </div>
+      <div class="list" style="margin-top:12px">${devs || `<div class="notice">No active output devices detected.</div>`}</div>
+    </article>`;
+}
+
+export function thxDriverCard() {
+  const drv = state.thxDriver;
+  if (!drv) return `<article class="card"><div class="card-title"><h2>Headset &amp; THX Driver</h2><span>lifecycle</span></div><div class="notice">Inspecting headset audio drivers…</div></article>`;
+  const op = drv.operation;
+  const installed = (drv.installedDrivers ?? []).map((d) => `<div class="list-item"><span><strong>${escapeHtml(d.publishedName)}</strong> · ${escapeHtml(d.originalName)}</span><span class="chip">${escapeHtml(d.provider)}</span></div>`).join("");
+  return `
+    <article class="card">
+      <div class="card-title"><h2>Headset &amp; THX Driver</h2><span>${drv.serviceRunning ? "service running" : drv.serviceInstalled ? "service stopped" : "not installed"}</span></div>
+      <div class="stat-row"><span class="stat-label">Service</span><span class="stat-value">${escapeHtml(drv.serviceName ?? "THXService")}</span></div>
+      <div class="stat-row"><span class="stat-label">Local package</span><span class="stat-value">${drv.packageReady ? "Ready" : "Not downloaded"}</span></div>
+      ${op ? `<div class="notice" style="margin:10px 0">${escapeHtml(op.action)} (${escapeHtml(op.status)}): ${escapeHtml(op.message)} <button class="button sm" type="button" data-thx-act="dismiss" style="margin-left:8px">Dismiss</button></div>` : ""}
+      <div class="actions" style="margin-top:10px">
+        <button class="button primary" type="button" data-thx-prepare>Download THX Driver</button>
+        <button class="button" type="button" data-thx-act="switch_thx">Install / Switch THX</button>
+        <button class="button" type="button" data-thx-act="switch_standard">Switch Standard USB</button>
+        <button class="button" type="button" data-thx-act="repair">Repair Audio</button>
+        <button class="button sm" type="button" data-thx-act="${drv.serviceRunning ? "stop_service" : "start_service"}">${drv.serviceRunning ? "Stop Service" : "Start Service"}</button>
+        <button class="button sm" type="button" data-thx-refresh>Refresh</button>
+      </div>
+      <div class="list" style="margin-top:12px">${installed || `<div class="notice">No third-party THX/ATK OEM audio drivers installed.</div>`}</div>
+    </article>`;
+}
+
+export function firmwareOtaCard() {
+  const fw = state.firmwareCheck;
+  const dl = state.firmwareDownload;
+  return `
+    <article class="card" style="margin-top:16px">
+      <div class="card-title"><h2>Device Firmware OTA</h2><span>Mouse / Receiver / Keyboard / Headset</span></div>
+      <div class="grid two">
+        <div>
+          ${field("Vendor ID", "fw-vid", state.selectedDevice?.vendor_id ?? "0x3554")}
+          ${field("Product ID", "fw-pid", state.selectedDevice?.product_id ?? "0xf505")}
+          ${field("Tag", "fw-tag", "firmware")}
+          ${field("Current Version", "fw-cur", state.mouse?.version ?? state.kb?.version ?? "")}
+          <div class="actions">
+            <button class="button primary" type="button" data-fw-check>Check Firmware</button>
+            <button class="button" type="button" data-fw-download ${fw?.downloadUrl ? "" : "disabled"}>Download Package</button>
+            <button class="button accent" type="button" data-fw-flash ${dl?.path ? "" : "disabled"}>Stage / Flash</button>
+          </div>
+        </div>
+        <div>
+          ${fw ? `<div class="stat-row"><span class="stat-label">Latest version</span><span class="stat-value">${escapeHtml(fw.latestVersion || "—")}</span></div>
+            <div class="stat-row"><span class="stat-label">Update available</span><span class="stat-value">${fw.available ? "Yes" : "Up to date"}</span></div>
+            ${fw.changelog ? `<div class="notice" style="margin-top:8px">${escapeHtml(fw.changelog)}</div>` : ""}` : `<div class="notice">Check the ATK cloud firmware feed for your connected mouse, receiver, keyboard or headset.</div>`}
+          ${dl ? `<div class="notice" style="margin-top:8px">Downloaded: <code>${escapeHtml(dl.path)}</code> (${dl.size} bytes${dl.verified ? ", SHA-256 verified" : ""})</div>` : ""}
+          <div class="output" id="fw-output">No firmware action yet.</div>
+        </div>
+      </div>
+    </article>`;
+}
+
+export function musicPracticeCard() {
+  const p = state.practice ?? { running: false };
+  const log = state.practiceLog ?? [];
+  const chips = log.slice(-24).map((ev) => `<span class="chip${ev.down ? " live" : ""}">${escapeHtml(ev.key)}${ev.down ? "↓" : "↑"}</span>`).join("");
+  return `
+    <article class="card" style="margin-top:16px">
+      <div class="card-title"><h2>Music Practice Mode</h2><span>${p.running ? "polling 8 ms (background)" : "stopped"}</span></div>
+      <div class="actions">
+        <button class="button primary" type="button" data-practice-toggle>${p.running ? "Stop Practice Poller" : "Start Practice Poller"}</button>
+        <button class="button sm" type="button" data-practice-clear>Clear Log</button>
+      </div>
+      <div class="chip-row" id="practice-log" style="margin-top:12px">${chips || `<span class="skeleton">Start the poller to capture background keystrokes for score practice.</span>`}</div>
+    </article>`;
+}
+
+export function pluginMarketCatalogCard() {
+  const cat = state.pluginCatalog;
+  if (!cat) return `<article class="card" style="margin-top:16px"><div class="card-title"><h2>Plugin Market Catalog</h2><span>loading…</span></div><div class="notice">Loading catalog…</div></article>`;
+  const items = (cat.items ?? []).map((item) => `
+    <div class="list-item">
+      <div class="device-summary">
+        <strong>${escapeHtml(item.name || item.title || item.id)}</strong>
+        <small>${escapeHtml(item.description || item.desc || "")} · v${escapeHtml(item.version || "1.0")}</small>
+      </div>
+      <div class="actions">
+        ${item.builtinPage ? `<button class="button sm primary" type="button" data-page="${escapeHtml(item.builtinPage)}">Open</button>` : ""}
+        ${item.downloadUrl ? `<button class="button sm" type="button" data-catalog-fill='${escapeHtml(JSON.stringify({ id: item.id, version: item.version || "1.0", url: item.downloadUrl }))}'>Fill Install</button>` : ""}
+      </div>
+    </div>`).join("");
+  return `
+    <article class="card" style="margin-top:16px">
+      <div class="card-title"><h2>Plugin Market Catalog</h2><span>${escapeHtml(cat.source || "cloud")}</span></div>
+      <div class="list">${items || `<div class="notice">No catalog items available.</div>`}</div>
+    </article>`;
+}
+
+async function extrasClick(t) {
+  const d = t.dataset;
+  if ("saRefresh" in d) { await guarded(t, async () => { state.systemAudio = await invoke("system_audio_get"); renderPage(); }); return true; }
+  if ("saApply" in d) {
+    await guarded(t, async () => {
+      state.systemAudio = await call("system_audio_set_volume", { volume: num("sa-vol", 50) }, "Master volume updated");
+      state.systemAudio = await invoke("system_audio_set_muted", { muted: checked("sa-mute") });
+      renderPage();
+    });
+    return true;
+  }
+  if ("thxRefresh" in d) { await guarded(t, async () => { state.thxDriver = await invoke("headset_driver_status"); renderPage(); }); return true; }
+  if ("thxPrepare" in d) {
+    await guarded(t, async () => {
+      const vid = state.selectedDevice?.vendor_id ?? "0x3554";
+      const pid = state.selectedDevice?.product_id ?? "0xf505";
+      state.thxDriver = await call("headset_driver_prepare", { vendorId: vid, productId: pid }, "THX driver package downloaded");
+      renderPage();
+    });
+    return true;
+  }
+  if (d.thxAct !== undefined) {
+    await guarded(t, async () => {
+      state.thxDriver = await call("headset_driver_action", { action: d.thxAct }, `Headset driver action: ${d.thxAct}`);
+      renderPage();
+    });
+    return true;
+  }
+  if ("fwCheck" in d) {
+    await guarded(t, async () => {
+      state.firmwareCheck = await call("firmware_check", {
+        vendorId: $("fw-vid")?.value ?? "0x3554",
+        productId: $("fw-pid")?.value ?? "0xf505",
+        tag: $("fw-tag")?.value ?? "firmware",
+        currentVersion: $("fw-cur")?.value || null,
+      }, "Firmware check complete");
+      renderPage();
+      show("fw-output", state.firmwareCheck);
+    });
+    return true;
+  }
+  if ("fwDownload" in d) {
+    await guarded(t, async () => {
+      state.firmwareDownload = await call("firmware_download", {
+        url: state.firmwareCheck?.downloadUrl ?? "",
+        sha256: state.firmwareCheck?.sha256 || null,
+      }, "Firmware downloaded");
+      renderPage();
+      show("fw-output", state.firmwareDownload);
+    });
+    return true;
+  }
+  if ("fwFlash" in d) {
+    await guarded(t, async () => {
+      const res = await call("firmware_flash", { path: state.firmwareDownload?.path ?? "", deviceKind: $("fw-tag")?.value ?? "device" }, "Firmware handoff complete");
+      show("fw-output", res);
+    });
+    return true;
+  }
+  if ("practiceToggle" in d) {
+    await guarded(t, async () => {
+      state.practice = await invoke(state.practice?.running ? "practice_stop" : "practice_start");
+      renderPage();
+    });
+    return true;
+  }
+  if ("practiceClear" in d) { state.practiceLog = []; renderPage(); return true; }
+  if ("gamePick" in d) {
+    await guarded(t, async () => {
+      const picked = await invoke("apps_pick_exe");
+      if (picked?.exe && $("game-exe")) {
+        $("game-exe").value = picked.exe;
+        setStatus(`Selected ${picked.exe}`);
+      }
+    });
+    return true;
+  }
+  if (d.catalogFill !== undefined) {
+    try {
+      const item = JSON.parse(d.catalogFill);
+      if ($("url")) $("url").value = item.url || "";
+      if ($("id")) $("id").value = item.id || "";
+      if ($("version")) $("version").value = item.version || "1.0";
+      setStatus(`Filled install form for ${item.id}`);
+    } catch {}
+    return true;
+  }
+  if (d.pluginRenderer !== undefined) {
+    await guarded(t, async () => {
+      const opened = await call("plugin_renderer_open", { kind: d.pluginRenderer }, `Opened ${d.pluginRenderer} renderer`);
+      setStatus(`Renderer: ${opened}`);
+    });
+    return true;
+  }
+  if ("toastTest" in d) {
+    await invoke("notification_show", { title: "ATK HUB", body: "Desktop notifications are active." }).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+if (window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("music-practice:key", (event) => {
+    if (!event.payload) return;
+    state.practiceLog = [...(state.practiceLog ?? []).slice(-48), event.payload];
+    const host = $("practice-log");
+    if (host) {
+      host.innerHTML = state.practiceLog.slice(-24).map((ev) => `<span class="chip${ev.down ? " live" : ""}">${escapeHtml(ev.key)}${ev.down ? "↓" : "↑"}</span>`).join("");
+    }
+  });
+}
+
 /* --------------------------------------------------------------- events -- */
 
 function syncRange(input) {
@@ -2208,6 +2431,7 @@ export function wireLiveEvents() {
     if (await liveWallClick(t)) return undefined;
     if (await rhythmClick(t)) return undefined;
     if (await dotScreenClick(t)) return undefined;
+    if (await extrasClick(t)) return undefined;
     if ("updateDownload" in d) {
       return guarded(t, async () => {
         state.updatePath = await call("update_download", {}, "Update downloaded and verified");
@@ -2261,6 +2485,9 @@ export function wireLiveEvents() {
       });
     }
     if (event.target.id === "game-enabled") saveHubSettings({ gameSwitchEnabled: event.target.checked });
+    if (event.target.id === "game-installed" && event.target.value && $("game-exe")) {
+      $("game-exe").value = event.target.value;
+    }
     if (event.target.id === "dpi-total") {
       document.querySelectorAll(".dpi-row").forEach((row) => row.classList.toggle("inactive", Number(row.dataset.stage) >= Number(event.target.value)));
     }
@@ -2325,8 +2552,9 @@ export async function loadLivePage(pageId) {
   } else if (pageId === "music") {
     if (!state.rhythm) {
       state.rhythm = await invoke("rhythm_get").catch(() => null);
-      if (state.rhythm) renderPage();
     }
+    state.practice = await invoke("practice_status").catch(() => ({ running: false }));
+    renderPage();
   } else if (pageId === "wallpapers") {
     if (!state.livewall) await liveWallLoad();
   } else if (pageId === "dotscreen") {
@@ -2339,15 +2567,25 @@ export async function loadLivePage(pageId) {
       if (state.toolbar) renderPage();
     }
   } else if (pageId === "audio") {
+    state.systemAudio = await invoke("system_audio_get").catch(() => null);
+    state.thxDriver = await invoke("headset_driver_status").catch(() => null);
     if (!state.headsets) await loadHeadset();
-    else renderHeadset();
+    else renderPage();
+  } else if (pageId === "plugins") {
+    if (!state.pluginCatalog) {
+      state.pluginCatalog = await invoke("plugin_market_catalog").catch(() => null);
+      renderPage();
+    }
   } else if (pageId === "pets") {
     await loadCompanions();
   } else if (pageId === "games") {
     if (!state.gameRules) {
       state.gameRules = await invoke("game_rules_get").catch(() => []);
-      renderPage();
     }
+    if (!state.installedApps) {
+      state.installedApps = await invoke("apps_list").catch(() => []);
+    }
+    renderPage();
   }
 }
 

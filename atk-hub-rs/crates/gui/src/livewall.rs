@@ -33,17 +33,23 @@ window.__atkStyle(Object.fromEntries(["brightness","contrast","saturation","blur
 
 /// Wallpaper Engine web API shim injected into HTML wallpapers.
 const BRIDGE: &str = r"(() => {
-  const audio = [], playback = [];
+  const audio = [], props = [], thumb = [], playback = [], timeline = [];
   window.wallpaperRegisterAudioListener = (f) => audio.push(f);
-  window.wallpaperRegisterMediaPropertiesListener = () => {};
-  window.wallpaperRegisterMediaThumbnailListener = () => {};
+  window.wallpaperRegisterMediaPropertiesListener = (f) => props.push(f);
+  window.wallpaperRegisterMediaThumbnailListener = (f) => thumb.push(f);
   window.wallpaperRegisterMediaPlaybackListener = (f) => playback.push(f);
-  window.wallpaperRegisterMediaTimelineListener = () => {};
+  window.wallpaperRegisterMediaTimelineListener = (f) => timeline.push(f);
   window.wallpaperMediaIntegration = { PLAYBACK_PLAYING: 0, PLAYBACK_PAUSED: 1, PLAYBACK_STOPPED: 2 };
   window.wallpaperPropertyListener = window.wallpaperPropertyListener || { applyUserProperties() {}, applyGeneralProperties() {} };
   window.wallpaperReady = () => {};
   window.__atkWpAudio = (d) => audio.forEach((f) => { try { f(d); } catch (e) { console.error(e); } });
   window.__atkWpPlayback = (d) => playback.forEach((f) => { try { f(d); } catch (e) { console.error(e); } });
+  window.__atkWpMedia = (m) => {
+    const st = m.state === 'playing' ? 0 : m.state === 'paused' ? 1 : 2;
+    props.forEach((f) => { try { f({ title: m.title || '', artist: m.artist || '', albumTitle: m.album || '' }); } catch (e) { console.error(e); } });
+    playback.forEach((f) => { try { f({ state: st }); } catch (e) { console.error(e); } });
+    timeline.forEach((f) => { try { f({ position: m.position || 0, duration: m.duration || 0 }); } catch (e) { console.error(e); } });
+  };
 })();";
 
 /// CSS filter settings for video and image wallpapers.
@@ -405,8 +411,48 @@ pub fn forward_audio(app: &AppHandle, spectrum: &[f32]) {
     }
 }
 
-/// Puts the saved wallpapers back after startup.
+/// Forwards a Windows SMTC media snapshot to HTML wallpapers.
+fn forward_media(app: &AppHandle, media: &atk_input::media::MediaSnapshot) {
+    let Ok(set) = html_windows().lock() else {
+        return;
+    };
+    if set.is_empty() {
+        return;
+    }
+    let Ok(payload) = serde_json::to_string(media) else {
+        return;
+    };
+    for name in set.iter() {
+        if let Some(window) = app.get_webview_window(name) {
+            let _ = window.eval(format!(
+                "window.__atkWpMedia && window.__atkWpMedia({payload})"
+            ));
+        }
+    }
+}
+
+/// Puts the saved wallpapers back after startup and starts the SMTC media bridge.
 pub fn restore(app: AppHandle) {
+    let media_app = app.clone();
+    std::thread::spawn(move || {
+        let mut last: Option<atk_input::media::MediaSnapshot> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let has_html = html_windows()
+                .lock()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if !has_html {
+                continue;
+            }
+            if let Some(current) = atk_input::media::current_media()
+                && last.as_ref() != Some(&current)
+            {
+                forward_media(&media_app, &current);
+                last = Some(current);
+            }
+        }
+    });
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(1500));
         let Ok(guard) = store().lock() else {

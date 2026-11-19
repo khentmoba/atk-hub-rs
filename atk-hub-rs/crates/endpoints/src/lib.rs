@@ -10,6 +10,8 @@ pub const OFFICIAL_SITE: &str = "https://desktop.vxe.com/v3hub";
 pub const MUSIC_SERVICE_EXIT: &str = "http://127.0.0.1:5577/exit";
 /// electron-updater feed configured in `app-update.yml`.
 pub const UPDATER_FEED: &str = "https://bpcdn.atkgear.com/device/update-v3/win32";
+/// Cloud Plugin Market API root.
+pub const PLUGIN_MARKET_BASE: &str = "https://api-hub-cloud.atk.pro/hub/plugin";
 
 /// Selects which background service metadata endpoint to query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,4 +76,22 @@ pub const fn music_service_exit_url() -> &'static str {
 #[must_use]
 pub const fn updater_feed_url() -> &'static str {
     UPDATER_FEED
+}
+
+/// Returns the Plugin Market catalog URL.
+#[must_use]
+pub fn plugin_market_list_url() -> String {
+    format!("{PLUGIN_MARKET_BASE}/privacies")
+}
+
+/// Returns the Plugin Market detail URL for a plugin id.
+#[must_use]
+pub fn plugin_market_detail_url(id: &str) -> String {
+    format!("{PLUGIN_MARKET_BASE}/detail/{id}")
+}
+
+/// Returns the Plugin Market download URL for a plugin id.
+#[must_use]
+pub fn plugin_market_download_url(id: &str) -> String {
+    format!("{PLUGIN_MARKET_BASE}/download/{id}")
 }
