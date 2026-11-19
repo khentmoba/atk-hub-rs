@@ -1855,6 +1855,242 @@ export function petControls() {
     <div class="actions"><button class="button primary" type="button" data-pet-save>Save Pet Settings</button></div>`;
 }
 
+/* ----------------------------------------------------------- dot screen -- */
+
+const DS_SWATCHES = ["#ff6900", "#ff2846", "#00b4ff", "#22c55e", "#facc15", "#a855f7", "#ffffff", "#000000"];
+
+function blankDotFrame() {
+  return Array.from({ length: 6 }, () => Array.from({ length: 6 }, () => [0, 0, 0]));
+}
+
+function hexToRgb(value) {
+  const c = String(value || "#000000").replace("#", "");
+  return [0, 2, 4].map((i) => parseInt(c.slice(i, i + 2), 16) || 0);
+}
+
+function cloneArt(art) {
+  return JSON.parse(JSON.stringify(art));
+}
+
+function ensureDotEdit() {
+  if (!state.dsColor) state.dsColor = "#ff6900";
+  if (!state.dsEdit) {
+    const seed = state.dotScreen?.artwork ?? state.dotScreen?.saved?.[0];
+    state.dsEdit = seed ? cloneArt(seed) : { version: 1, name: "Custom", frameRate: 2, frames: [blankDotFrame()] };
+  }
+  if (!Array.isArray(state.dsEdit.frames) || !state.dsEdit.frames.length) {
+    state.dsEdit.frames = [blankDotFrame()];
+  }
+  state.dsFrame = Math.min(state.dsFrame ?? 0, state.dsEdit.frames.length - 1);
+}
+
+async function loadDotScreen() {
+  state.dotScreen = await invoke("dotscreen_status").catch(() => ({
+    running: false, connected: false, artwork: null, frameIndex: 0, error: null, targets: [], saved: [], autoReconnect: true,
+  }));
+  ensureDotEdit();
+  renderPage();
+}
+
+export function dotScreenPage() {
+  const ds = state.dotScreen;
+  if (!ds) return `<div class="notice">Loading dot-matrix screen…</div>`;
+  ensureDotEdit();
+  const art = state.dsEdit;
+  const frame = art.frames[state.dsFrame] ?? blankDotFrame();
+  const targets = ds.targets ?? [];
+  const targetOpts = targets.length
+    ? targets.map((t) => [t.path, `${t.product} (${toHex16(t.vendorId)}:${toHex16(t.productId)})`])
+    : [["", "No supported keyboard connected (VID 0x373B)"]];
+  const badge = ds.running ? (ds.connected ? `streaming · frame ${(ds.frameIndex ?? 0) + 1}` : "waiting for keyboard") : "stopped";
+  const cells = frame.map((row, r) => row.map((px, c) => {
+    const on = px[0] || px[1] || px[2];
+    const bg = on ? `rgb(${px[0]}, ${px[1]}, ${px[2]})` : "#18181b";
+    return `<button type="button" class="ds-cell${on ? " on" : ""}" data-ds-cell="${r},${c}" style="background:${bg}" title="Row ${r + 1}, Col ${c + 1}"></button>`;
+  }).join("")).join("");
+  const swatches = DS_SWATCHES.map((hexColor) => `<button type="button" class="ds-swatch${state.dsColor === hexColor ? " active" : ""}" data-ds-swatch="${hexColor}" style="background:${hexColor}" title="${hexColor}"></button>`).join("");
+  const frameBtns = art.frames.map((_, i) => `<button type="button" class="button sm${i === state.dsFrame ? " primary" : ""}" data-ds-frame="${i}">${i + 1}</button>`).join("");
+  const savedRows = (ds.saved ?? []).map((item) => `
+    <div class="list-item">
+      <div><strong>${escapeHtml(item.name)}</strong><small style="display:block;color:var(--muted)">${item.frames.length} frame(s) · ${item.frameRate} FPS</small></div>
+      <div class="actions">
+        <button class="button sm" type="button" data-ds-load="${escapeHtml(item.name)}">Load</button>
+        <button class="button sm primary" type="button" data-ds-play-saved="${escapeHtml(item.name)}">Play</button>
+        <button class="button sm" type="button" data-ds-delete="${escapeHtml(item.name)}">Delete</button>
+      </div>
+    </div>`).join("");
+
+  return `
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>6×6 Pixel Editor</h2><span>${escapeHtml(badge)}</span></div>
+        <div class="ds-grid">${cells}</div>
+        <div class="ds-swatches">
+          <input type="color" id="ds-color" value="${escapeHtml(state.dsColor)}" style="width:42px;height:34px;padding:2px" />
+          ${swatches}
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button class="button sm" type="button" data-ds-fill>Fill Frame</button>
+          <button class="button sm" type="button" data-ds-clear>Clear Frame</button>
+          <button class="button sm" type="button" data-ds-add-frame ${art.frames.length >= 20 ? "disabled" : ""}>+ Frame</button>
+          <button class="button sm" type="button" data-ds-dup-frame ${art.frames.length >= 20 ? "disabled" : ""}>Duplicate</button>
+          <button class="button sm" type="button" data-ds-del-frame ${art.frames.length <= 1 ? "disabled" : ""}>Remove Frame</button>
+        </div>
+        <div class="actions" style="margin-top:10px">${frameBtns}</div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Playback &amp; Device</h2><span>${targets.length} target(s)</span></div>
+        ${select("Keyboard", "ds-target", targetOpts, $("ds-target")?.value ?? targets[0]?.path ?? "")}
+        ${field("Name", "ds-name", art.name)}
+        ${range("Frame rate", "ds-fps", 1, 6, 1, art.frameRate, " FPS")}
+        ${toggle("Auto-reconnect saved animation", "ds-auto", ds.autoReconnect)}
+        ${ds.error ? `<div class="notice" style="margin-bottom:10px">${escapeHtml(ds.error)}</div>` : ""}
+        <div class="actions">
+          <button class="button primary" type="button" data-ds-start>Play on Keyboard</button>
+          <button class="button" type="button" data-ds-stop ${ds.running ? "" : "disabled"}>Stop</button>
+          <button class="button" type="button" data-ds-save>Save to Library</button>
+          <button class="button sm" type="button" data-ds-refresh>Refresh</button>
+        </div>
+        <div class="actions" style="margin-top:10px">
+          <button class="button sm" type="button" data-ds-export>Export JSON</button>
+          <label class="button sm" style="cursor:pointer">Import JSON<input type="file" id="ds-import" accept=".json,application/json" hidden /></label>
+        </div>
+      </article>
+    </div>
+    <article class="card" style="margin-top:16px">
+      <div class="card-title"><h2>Saved Animations</h2><span>${(ds.saved ?? []).length} saved</span></div>
+      <div class="list">${savedRows || `<div class="notice">No saved animations yet.</div>`}</div>
+    </article>`;
+}
+
+async function dotScreenClick(t) {
+  const d = t.dataset;
+  if (d.dsCell !== undefined) {
+    ensureDotEdit();
+    const [r, c] = d.dsCell.split(",").map(Number);
+    const frame = state.dsEdit.frames[state.dsFrame];
+    const next = hexToRgb(state.dsColor);
+    const cur = frame[r][c];
+    frame[r][c] = (cur[0] === next[0] && cur[1] === next[1] && cur[2] === next[2]) ? [0, 0, 0] : next;
+    renderPage();
+    return true;
+  }
+  if (d.dsSwatch !== undefined) { state.dsColor = d.dsSwatch; renderPage(); return true; }
+  if (d.dsFrame !== undefined) { state.dsFrame = Number(d.dsFrame); renderPage(); return true; }
+  if ("dsFill" in d) {
+    ensureDotEdit();
+    const rgb = hexToRgb(state.dsColor);
+    state.dsEdit.frames[state.dsFrame] = Array.from({ length: 6 }, () => Array.from({ length: 6 }, () => [...rgb]));
+    renderPage();
+    return true;
+  }
+  if ("dsClear" in d) {
+    ensureDotEdit();
+    state.dsEdit.frames[state.dsFrame] = blankDotFrame();
+    renderPage();
+    return true;
+  }
+  if ("dsAddFrame" in d) {
+    ensureDotEdit();
+    if (state.dsEdit.frames.length < 20) {
+      state.dsEdit.frames.push(blankDotFrame());
+      state.dsFrame = state.dsEdit.frames.length - 1;
+      renderPage();
+    }
+    return true;
+  }
+  if ("dsDupFrame" in d) {
+    ensureDotEdit();
+    if (state.dsEdit.frames.length < 20) {
+      state.dsEdit.frames.splice(state.dsFrame + 1, 0, cloneArt(state.dsEdit.frames[state.dsFrame]));
+      state.dsFrame += 1;
+      renderPage();
+    }
+    return true;
+  }
+  if ("dsDelFrame" in d) {
+    ensureDotEdit();
+    if (state.dsEdit.frames.length > 1) {
+      state.dsEdit.frames.splice(state.dsFrame, 1);
+      state.dsFrame = Math.min(state.dsFrame, state.dsEdit.frames.length - 1);
+      renderPage();
+    }
+    return true;
+  }
+  if ("dsRefresh" in d) { await guarded(t, loadDotScreen); return true; }
+  if ("dsStart" in d) {
+    await guarded(t, async () => {
+      ensureDotEdit();
+      state.dsEdit.name = ($("ds-name")?.value ?? state.dsEdit.name).trim() || "Custom";
+      state.dsEdit.frameRate = num("ds-fps", state.dsEdit.frameRate || 2);
+      const path = $("ds-target")?.value || null;
+      state.dotScreen = await call("dotscreen_start", { artwork: state.dsEdit, path }, "Dot-screen animation started");
+      renderPage();
+    });
+    return true;
+  }
+  if ("dsStop" in d) {
+    await guarded(t, async () => {
+      state.dotScreen = await call("dotscreen_stop", {}, "Dot-screen playback stopped");
+      renderPage();
+    });
+    return true;
+  }
+  if ("dsSave" in d) {
+    await guarded(t, async () => {
+      ensureDotEdit();
+      state.dsEdit.name = ($("ds-name")?.value ?? state.dsEdit.name).trim() || "Custom";
+      state.dsEdit.frameRate = num("ds-fps", state.dsEdit.frameRate || 2);
+      state.dotScreen = await call("dotscreen_save", { artwork: state.dsEdit }, "Dot-screen artwork saved");
+      renderPage();
+    });
+    return true;
+  }
+  if (d.dsLoad !== undefined) {
+    const found = (state.dotScreen?.saved ?? []).find((a) => a.name === d.dsLoad);
+    if (found) { state.dsEdit = cloneArt(found); state.dsFrame = 0; renderPage(); setStatus(`Loaded "${found.name}"`); }
+    return true;
+  }
+  if (d.dsPlaySaved !== undefined) {
+    const found = (state.dotScreen?.saved ?? []).find((a) => a.name === d.dsPlaySaved);
+    if (found) {
+      await guarded(t, async () => {
+        state.dsEdit = cloneArt(found);
+        state.dsFrame = 0;
+        state.dotScreen = await call("dotscreen_start", { artwork: found, path: $("ds-target")?.value || null }, `Playing "${found.name}"`);
+        renderPage();
+      });
+    }
+    return true;
+  }
+  if (d.dsDelete !== undefined) {
+    await guarded(t, async () => {
+      state.dotScreen = await call("dotscreen_delete", { name: d.dsDelete }, `Deleted "${d.dsDelete}"`);
+      renderPage();
+    });
+    return true;
+  }
+  if ("dsExport" in d) {
+    ensureDotEdit();
+    const blob = new Blob([JSON.stringify(state.dsEdit, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(state.dsEdit.name || "dotscreen").replace(/[^a-z0-9_-]+/gi, "_")}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return true;
+  }
+  return false;
+}
+
+if (window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("dotscreen:status", (event) => {
+    if (!event.payload) return;
+    state.dotScreen = event.payload;
+    if (state.current === "dotscreen") renderPage();
+  });
+}
+
 /* --------------------------------------------------------------- events -- */
 
 function syncRange(input) {
@@ -1971,6 +2207,7 @@ export function wireLiveEvents() {
     if (await pcClick(t)) return undefined;
     if (await liveWallClick(t)) return undefined;
     if (await rhythmClick(t)) return undefined;
+    if (await dotScreenClick(t)) return undefined;
     if ("updateDownload" in d) {
       return guarded(t, async () => {
         state.updatePath = await call("update_download", {}, "Update downloaded and verified");
@@ -2004,6 +2241,25 @@ export function wireLiveEvents() {
       event.target.files[0].text().then((text) => { $("pc-script").value = text; show("pc-output", `Imported ${event.target.files[0].name}`); });
     }
     if (event.target.id === "merit-period") { state.meritPeriod = event.target.value; renderCompanions(); }
+    if (event.target.id === "ds-auto") {
+      invoke("dotscreen_auto_reconnect", { enabled: event.target.checked }).then((s) => { state.dotScreen = s; }).catch(() => {});
+    }
+    if (event.target.id === "ds-color") { state.dsColor = event.target.value; }
+    if (event.target.id === "ds-fps" && state.dsEdit) { state.dsEdit.frameRate = num("ds-fps", 2); renderPage(); }
+    if (event.target.id === "ds-name" && state.dsEdit) { state.dsEdit.name = event.target.value; }
+    if (event.target.id === "ds-import" && event.target.files?.[0]) {
+      event.target.files[0].text().then((text) => {
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && Array.isArray(parsed.frames) && parsed.frames.length) {
+            state.dsEdit = { version: 1, name: parsed.name || "Imported", frameRate: Math.min(6, Math.max(1, Number(parsed.frameRate) || 2)), frames: parsed.frames.slice(0, 20) };
+            state.dsFrame = 0;
+            renderPage();
+            setStatus("Dot-screen artwork imported");
+          }
+        } catch (error) { setStatus(`Invalid JSON: ${error.message}`); }
+      });
+    }
     if (event.target.id === "game-enabled") saveHubSettings({ gameSwitchEnabled: event.target.checked });
     if (event.target.id === "dpi-total") {
       document.querySelectorAll(".dpi-row").forEach((row) => row.classList.toggle("inactive", Number(row.dataset.stage) >= Number(event.target.value)));
@@ -2073,6 +2329,10 @@ export async function loadLivePage(pageId) {
     }
   } else if (pageId === "wallpapers") {
     if (!state.livewall) await liveWallLoad();
+  } else if (pageId === "dotscreen") {
+    if (!state.dotScreen) {
+      await loadDotScreen();
+    }
   } else if (pageId === "toolbar") {
     if (!state.toolbar) {
       state.toolbar = await invoke("toolbar_get").catch(() => null);

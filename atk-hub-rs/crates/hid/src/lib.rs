@@ -5,6 +5,7 @@
 //! writes numbered output reports and correlates the input-report replies.
 
 pub mod compx;
+pub mod dotscreen;
 pub mod dpi;
 pub mod headset;
 mod kb_models;

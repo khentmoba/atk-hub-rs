@@ -806,6 +806,55 @@ textarea {
   font-size: 11px;
 }
 
+.ds-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 42px);
+  gap: 8px;
+  padding: 14px;
+  width: fit-content;
+  border-radius: var(--radius-md);
+  background: #0d0d10;
+  border: 1px solid var(--border-strong);
+  margin-bottom: 12px;
+}
+
+.ds-cell {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.ds-cell:hover {
+  transform: scale(1.06);
+}
+
+.ds-cell.on {
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.25);
+}
+
+.ds-swatches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ds-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  cursor: pointer;
+}
+
+.ds-swatch.active {
+  border-color: var(--ink);
+  transform: scale(1.12);
+}
+
 @media (max-width: 1080px) {
   .quick-nav {
     display: none;

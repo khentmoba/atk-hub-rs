@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
+mod dotscreen;
 mod headset;
 mod live;
 mod livewall;
@@ -112,6 +113,12 @@ const PAGES: &[PageInfo] = &[
         id: "lighting",
         label: "Light Show",
         subtitle: "Keyboard backlight and effects",
+        group: "Device",
+    },
+    PageInfo {
+        id: "dotscreen",
+        label: "Dot Screen",
+        subtitle: "6x6 RGB pixel animations for keyboards with a dot-matrix display",
         group: "Device",
     },
     PageInfo {
@@ -1012,6 +1019,12 @@ pub fn run() {
             livewall::livewall_style,
             livewall::livewall_import,
             livewall::livewall_set_system,
+            dotscreen::dotscreen_status,
+            dotscreen::dotscreen_start,
+            dotscreen::dotscreen_stop,
+            dotscreen::dotscreen_save,
+            dotscreen::dotscreen_delete,
+            dotscreen::dotscreen_auto_reconnect,
             toolbar::toolbar_get,
             toolbar::toolbar_set,
             toolbar::toolbar_preview,
@@ -1099,6 +1112,7 @@ pub fn run() {
             toolbar::build_toolbar(app)?;
             livewall::restore(app.handle().clone());
             rhythm::autostart(app.handle());
+            dotscreen::restore(app.handle().clone());
             toolbar::spawn_selection_watch(app.handle().clone());
             std::thread::spawn(pcscript::resume_on_startup);
             let state = app.state::<HubState>();

@@ -1,5 +1,5 @@
 import {
-  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage, liveWallCards, rhythmCards,
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage, liveWallCards, rhythmCards, dotScreenPage,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -40,7 +40,7 @@ const state = {
 };
 
 const glyphs = {
-  overview: "⌂", devices: "DV", mouse: "MO", keyboard: "KB", games: "GM", pcscript: "PC", toolbar: "FT", lighting: "LS", macros: "MX", audio: "TH",
+  overview: "⌂", devices: "DV", mouse: "MO", keyboard: "KB", games: "GM", pcscript: "PC", toolbar: "FT", lighting: "LS", dotscreen: "DS", macros: "MX", audio: "TH",
   wallpapers: "BG", music: "MS", pets: "PT", plugins: "PM", updater: "UP",
   drivers: "DR", settings: "ST", diagnostics: "DG",
 };
@@ -748,6 +748,7 @@ const renderers = {
   games: gamesPage,
   pcscript: pcScriptPage,
   lighting: lightingPage,
+  dotscreen: dotScreenPage,
   macros: macrosPage,
   audio: audioPage,
   wallpapers: wallpapersPage,
@@ -1018,6 +1019,7 @@ function previewResponse(command, args) {
     { id: "mouse", label: "Mouse", subtitle: "DPI, polling rate, buttons and sensor settings", group: "Device" },
     { id: "keyboard", label: "Keyboard", subtitle: "Layout and key tester", group: "Device" },
     { id: "lighting", label: "Light Show", subtitle: "Keyboard backlight and effects", group: "Device" },
+    { id: "dotscreen", label: "Dot Screen", subtitle: "6x6 RGB pixel animations for keyboards with a dot-matrix display", group: "Device" },
     { id: "macros", label: "Macros", subtitle: "Key sequences and bindings", group: "Device" },
     { id: "audio", label: "Audio", subtitle: "Headset EQ, sidetone and THX spatial audio", group: "Device" },
     { id: "games", label: "Game Mode", subtitle: "Switch mouse profiles when a game is in focus", group: "Device" },
@@ -1066,6 +1068,7 @@ function previewResponse(command, args) {
     livewall_list: { current: "1", displays: [{ index: 0, name: "\\\\.\\DISPLAY1", width: 2560, height: 1440, x: 0, y: 0, wallpaperId: "1", url: "" }, { index: 1, name: "\\\\.\\DISPLAY2", width: 1920, height: 1080, x: 2560, y: 0, wallpaperId: "", url: "" }],
       wallpapers: [{ id: "1", title: "Neon City", fileType: "video", fileSize: 24117248, previewUrl: "", style: { brightness: 100, contrast: 100, saturation: 100, blur: 0, hueRotate: 0, grayscale: 0 } }, { id: "2", title: "Audio Bars", fileType: "html", fileSize: 3145728, previewUrl: "", style: {} }] },
     rhythm_get: { running: false, device: "Speakers (Realtek(R) Audio)", prefs: { effect: "spectrum", palette: "gradient", color: [0, 170, 255], sensitivity: 100, gravity: 20, keyboard: true, autostart: false } },
+    dotscreen_status: { running: false, connected: false, artwork: null, frameIndex: 0, error: null, targets: [], saved: [{ version: 1, name: "Heart Pulse", frameRate: 2, frames: [Array.from({ length: 6 }, () => Array.from({ length: 6 }, () => [255, 60, 90]))] }], autoReconnect: true },
     kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },
