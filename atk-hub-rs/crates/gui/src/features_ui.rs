@@ -1,6 +1,6 @@
 //! GUI pages for lighting, macros, music, pets, plugins, updates and drivers.
 
-use super::HubApp;
+use super::{HubApp, theme};
 use atk_config::Config;
 use atk_features::{DriverInfo, Lighting, Macro, MacroStep, Plugin, UpdateInfo};
 use std::path::PathBuf;
@@ -117,7 +117,7 @@ fn dirs_home() -> PathBuf {
 
 impl HubApp {
     pub(super) fn lighting_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Keyboard lighting");
+        theme::h2(ui, "Keyboard lighting");
         ui.label("Keymaps come from the installed renderer bundle; reports are sent through the live agent.");
         if ui.button("Load keymaps").clicked() {
             let asar = PathBuf::from("C:\\Program Files\\ATK HUB\\resources\\main\\app.asar");
@@ -155,7 +155,7 @@ impl HubApp {
             ui.label("Brightness");
             ui.text_edit_singleline(&mut self.features.brightness);
         });
-        if ui.button("Send lighting report").clicked() {
+        if theme::primary_button(ui, "Send lighting report").clicked() {
             let lighting = Lighting {
                 keymap: self.features.keymap.clone(),
                 red: self.features.red.parse().unwrap_or(0),
@@ -169,7 +169,7 @@ impl HubApp {
     }
 
     pub(super) fn macros_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Macros");
+        theme::h2(ui, "Macros");
         ui.horizontal(|ui| {
             ui.label("Storage");
             ui.text_edit_singleline(&mut self.features.macro_path);
@@ -201,7 +201,7 @@ impl HubApp {
             ui.label("Keys");
             ui.text_edit_singleline(&mut self.features.macro_keys);
         });
-        if ui.button("Add macro").clicked() {
+        if theme::primary_button(ui, "Add macro").clicked() {
             let steps: Vec<MacroStep> = self
                 .features
                 .macro_keys
@@ -260,9 +260,9 @@ impl HubApp {
     }
 
     pub(super) fn music_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Music rhythm");
+        theme::h2(ui, "Music rhythm");
         ui.label("The legacy rhythm service listens on loopback port 5577.");
-        if ui.button("Refresh status").clicked() {
+        if theme::primary_button(ui, "Refresh status").clicked() {
             self.features.music_status = if atk_features::music_service_running() {
                 "Service is running on 127.0.0.1:5577".to_owned()
             } else {
@@ -279,7 +279,7 @@ impl HubApp {
     }
 
     pub(super) fn pets_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Desktop pets");
+        theme::h2(ui, "Desktop pets");
         ui.horizontal(|ui| {
             ui.label("Settings");
             ui.text_edit_singleline(&mut self.features.pet_path);
@@ -330,7 +330,7 @@ impl HubApp {
     }
 
     pub(super) fn plugins_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Plugins");
+        theme::h2(ui, "Plugins");
         ui.horizontal(|ui| {
             ui.label("User data");
             ui.text_edit_singleline(&mut self.features.user_data);
@@ -347,7 +347,7 @@ impl HubApp {
         }
         ui.label(self.features.plugin_status.as_str());
         ui.separator();
-        ui.heading("Install bundle");
+        theme::h2(ui, "Install bundle");
         ui.horizontal(|ui| {
             ui.label("URL");
             ui.text_edit_singleline(&mut self.features.plugin_url);
@@ -362,7 +362,7 @@ impl HubApp {
             ui.label("SHA-256");
             ui.text_edit_singleline(&mut self.features.plugin_sha);
         });
-        if ui.button("Download, verify and install").clicked() {
+        if theme::primary_button(ui, "Download, verify and install").clicked() {
             let root = PathBuf::from(&self.features.user_data);
             let url = self.features.plugin_url.clone();
             let id = self.features.plugin_id.clone();
@@ -387,9 +387,9 @@ impl HubApp {
     }
 
     pub(super) fn updater_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Updater");
+        theme::h2(ui, "Updater");
         ui.label("Checks the production feed used by electron-updater.");
-        if ui.button("Check for updates").clicked() {
+        if theme::primary_button(ui, "Check for updates").clicked() {
             match atk_features::check_update() {
                 Ok(update) => {
                     self.features.update_status =
@@ -416,9 +416,9 @@ impl HubApp {
     }
 
     pub(super) fn drivers_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Driver downloads");
+        theme::h2(ui, "Driver downloads");
         ui.label("Fetches service metadata from api-hub-cloud.atk.pro.");
-        if ui.button("Fetch game-power service").clicked() {
+        if theme::primary_button(ui, "Fetch game-power service").clicked() {
             match atk_features::fetch_service_driver() {
                 Ok(driver) => {
                     self.features.driver_status = format!("Remote version {}", driver.version);

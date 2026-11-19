@@ -550,6 +550,7 @@ dependencies = [
  "atk-wallpaper",
  "eframe",
  "egui",
+ "image",
  "serde_json",
  "tokio",
 ]
