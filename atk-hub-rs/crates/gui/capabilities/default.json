@@ -4,9 +4,12 @@
   "description": "Default permissions for the ATK HUB main window",
   "windows": [
     "main",
-    "lockhint"
+    "lockhint",
+    "woodenfish",
+    "pet"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-start-dragging"
   ]
 }

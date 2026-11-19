@@ -725,7 +725,7 @@ pub fn find_installer(dir: &Path) -> Option<PathBuf> {
 
 /// Wooden-fish / desk-pet settings stored under `progress` in
 /// `wooden-fish.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetSettings {
     /// Feature enabled.
@@ -902,4 +902,46 @@ pub struct GameRule {
 #[must_use]
 pub fn match_game_rule<'a>(rules: &'a [GameRule], exe: &str) -> Option<&'a GameRule> {
     rules.iter().find(|rule| rule.exe.eq_ignore_ascii_case(exe))
+}
+
+/// Reads the first `static/` asset whose file name starts with `prefix` and
+/// ends with `extension`, e.g. the hashed `aby-*.webp` pet sprite.
+///
+/// # Errors
+///
+/// Returns an error when the archive cannot be read or has no such asset.
+pub fn read_asar_asset(
+    asar_path: &Path,
+    prefix: &str,
+    extension: &str,
+) -> Result<Vec<u8>, FeatureError> {
+    let bytes = fs::read(asar_path)?;
+    let manifest = Manifest::parse(&bytes)?;
+    let path = manifest
+        .paths()
+        .into_iter()
+        .find(|path| {
+            path.strip_prefix("static/")
+                .is_some_and(|name| name.starts_with(prefix) && name.ends_with(extension))
+        })
+        .ok_or_else(|| FeatureError::UnexpectedDocument {
+            field: format!("static/{prefix}*{extension}"),
+        })?;
+    let entry = manifest
+        .lookup(&path)
+        .ok_or_else(|| FeatureError::UnexpectedDocument {
+            field: path.clone(),
+        })?;
+    let start = usize::try_from(manifest.data_offset + entry.offset).unwrap_or(usize::MAX);
+    let end = start.saturating_add(usize::try_from(entry.size).unwrap_or(usize::MAX));
+    bytes
+        .get(start..end)
+        .map(<[u8]>::to_vec)
+        .ok_or(FeatureError::UnexpectedDocument { field: path })
+}
+
+/// Encodes bytes as a `data:` URL with the given media type.
+#[must_use]
+pub fn data_url(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{mime};base64,{}", base64(bytes))
 }

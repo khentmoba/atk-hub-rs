@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
 mod live;
+mod overlay;
 
 #[cfg(not(windows))]
 use atk_agent::PipeName;
@@ -17,8 +18,8 @@ use atk_agent::{AgentClient, DeviceId, PipeName, Rule, RuleAction};
 
 #[cfg(test)]
 const DEFAULT_PIPE: &str = "atk-hub-agent-session-1";
-const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\app.asar";
-const FALLBACK_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
+pub(crate) const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\app.asar";
+pub(crate) const FALLBACK_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
 #[cfg(windows)]
 const SERVICE_EXE: &str = r"C:\Program Files\ATK HUB\resources\service\atk-hub-service.exe";
 
@@ -957,6 +958,15 @@ pub fn run() {
             music_stop,
             live::pets_load,
             live::pets_save,
+            overlay::overlay_state,
+            overlay::woodenfish_tap,
+            overlay::woodenfish_set,
+            overlay::woodenfish_sound_get,
+            overlay::woodenfish_sound_set,
+            overlay::desktop_pet_set,
+            overlay::desktop_pet_reset_position,
+            overlay::desktop_pet_sprite,
+            overlay::desktop_pet_upload,
             live::mouse_list,
             live::kb_list,
             live::kb_snapshot,
@@ -1018,6 +1028,8 @@ pub fn run() {
             }
             live::build_tray(app)?;
             live::build_lock_overlay(app)?;
+            overlay::build_overlays(app)?;
+            overlay::spawn_input_watch(app.handle().clone());
             let state = app.state::<HubState>();
             let settings = state
                 .settings

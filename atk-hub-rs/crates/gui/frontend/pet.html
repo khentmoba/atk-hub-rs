@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Desktop pet</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    body { display: flex; flex-direction: column; align-items: center; font: 600 12px/1.2 "Segoe UI", system-ui, sans-serif; }
+    .hints { height: 96px; display: flex; flex-direction: column-reverse; align-items: center; gap: 4px; padding-bottom: 4px; box-sizing: border-box; }
+    .hint {
+      padding: 3px 9px; border-radius: 8px; background: rgba(20, 22, 28, 0.82); color: #fff;
+      animation: fade 1.2s ease-out forwards;
+    }
+    @keyframes fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
+    .sprite { background-repeat: no-repeat; image-rendering: auto; cursor: grab; }
+    .label { height: 24px; display: flex; align-items: center; gap: 6px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7); }
+    .level { padding: 1px 6px; border-radius: 6px; background: #f5b041; color: #222; text-shadow: none; }
+  </style>
+</head>
+<body>
+  <div class="hints" id="hints"></div>
+  <div class="sprite" id="sprite" data-tauri-drag-region></div>
+  <div class="label" id="label"><span id="name">Aby</span><span class="level" id="level">Lv 1</span></div>
+  <script>
+    const tauri = window.__TAURI__;
+    const invoke = (cmd, args) => tauri?.core?.invoke(cmd, args);
+    const FRAME_W = 192;
+    const FRAME_H = 208;
+    const STATES = [
+      ["idle", [280, 110, 110, 140, 140, 320]],
+      ["running-right", [120, 120, 120, 120, 120, 120, 220]],
+      ["running-left", [120, 120, 120, 120, 120, 120, 220]],
+      ["waving", [140, 140, 140, 280]],
+      ["jumping", [140, 140, 140, 140, 280]],
+      ["failed", [140, 140, 140, 140, 140, 140, 140, 240]],
+      ["waiting", [150, 150, 150, 150, 150, 260]],
+      ["running", [120, 120, 120, 120, 120, 220]],
+      ["review", [150, 150, 150, 150, 150, 280]],
+    ];
+    const ROW = Object.fromEntries(STATES.map(([name, frames], row) => [name, { row, frames }]));
+    const IDLE_PLAY = ["waving", "waiting", "review"];
+    const sprite = document.getElementById("sprite");
+    let prefs = { scale: 100, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby" };
+    let current = "idle";
+    let frame = 0;
+    let holdUntil = 0;
+    let timer = null;
+    let lastActive = Date.now();
+
+    function size() {
+      const width = (128 * Math.min(150, Math.max(50, prefs.scale || 100))) / 100;
+      return [width, (width * FRAME_H) / FRAME_W];
+    }
+
+    function draw() {
+      const [w, h] = size();
+      const sx = w / FRAME_W;
+      const { row } = ROW[current];
+      sprite.style.width = `${w}px`;
+      sprite.style.height = `${h}px`;
+      sprite.style.backgroundSize = `${8 * FRAME_W * sx}px ${9 * FRAME_H * sx}px`;
+      sprite.style.backgroundPosition = `${-frame * w}px ${-row * h}px`;
+    }
+
+    function play(name, holdMs = 0) {
+      if (!ROW[name]) return;
+      if (current !== name) frame = 0;
+      current = name;
+      holdUntil = holdMs ? Date.now() + holdMs : 0;
+      if (name !== "idle") lastActive = Date.now();
+      draw();
+    }
+
+    function step() {
+      const { frames } = ROW[current];
+      frame += 1;
+      if (frame >= frames.length) {
+        frame = 0;
+        if (current !== "idle" && Date.now() >= holdUntil) current = "idle";
+        else if (current === "idle" && prefs.autoPlay && Date.now() - lastActive > 8000 && Math.random() < 0.3) {
+          play(IDLE_PLAY[Math.floor(Math.random() * IDLE_PLAY.length)], 1);
+        }
+      }
+      draw();
+      timer = setTimeout(step, ROW[current].frames[frame] ?? 140);
+    }
+
+    function hint(text) {
+      if (!prefs.showKeyHints) return;
+      const box = document.getElementById("hints");
+      const el = document.createElement("div");
+      el.className = "hint";
+      el.textContent = text;
+      box.prepend(el);
+      while (box.children.length > 3) box.lastChild.remove();
+      setTimeout(() => el.remove(), 1250);
+    }
+
+    function applyPrefs(snapshot) {
+      if (!snapshot) return;
+      prefs = { ...prefs, ...snapshot.pet };
+      document.getElementById("name").textContent = prefs.petName || "Aby";
+      document.getElementById("level").textContent = `Lv ${snapshot.level ?? 1}`;
+      document.getElementById("label").style.visibility = prefs.showLevel ? "visible" : "hidden";
+      draw();
+    }
+
+    async function loadSprite() {
+      try {
+        const url = await invoke("desktop_pet_sprite");
+        sprite.style.backgroundImage = `url("${url}")`;
+      } catch (error) {
+        sprite.textContent = String(error);
+      }
+    }
+
+    sprite.addEventListener("dblclick", () => play("waving", 600));
+    tauri?.event?.listen("pet:input", ({ payload }) => {
+      if (!prefs.followInput) return;
+      play("jumping", 840);
+      hint(payload.label);
+      document.getElementById("level").textContent = `Lv ${payload.level}`;
+    });
+    tauri?.event?.listen("pet:pointer", ({ payload }) => {
+      if (!prefs.followInput || current === "jumping") return;
+      play(payload.state, 450);
+    });
+    tauri?.event?.listen("pet:settings", ({ payload }) => applyPrefs(payload));
+    tauri?.event?.listen("pet:sprite", loadSprite);
+    tauri?.event?.listen("pet:play", ({ payload }) => play(payload, 1500));
+    invoke("overlay_state")?.then(applyPrefs);
+    loadSprite();
+    draw();
+    step();
+  </script>
+</body>
+</html>

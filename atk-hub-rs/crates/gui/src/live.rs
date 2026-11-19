@@ -23,7 +23,7 @@ pub type SharedMouse = Arc<Mutex<Option<CompxMouse<HidTransport>>>>;
 /// Lazily opened keyboard shared by the keyboard commands.
 pub type SharedKeyboard = Arc<Mutex<Option<Keyboard<HidTransport>>>>;
 
-fn lock_err<T>(_: T) -> String {
+pub(crate) fn lock_err<T>(_: T) -> String {
     "state lock poisoned".to_owned()
 }
 
@@ -380,14 +380,14 @@ fn config_path() -> PathBuf {
     user_data_dir().join("config.json")
 }
 
-fn load_config(path: &Path) -> Config {
+pub(crate) fn load_config(path: &Path) -> Config {
     fs::read_to_string(path)
         .ok()
         .and_then(|text| Config::parse(&text).ok())
         .unwrap_or_default()
 }
 
-fn save_config(path: &Path, config: &Config) -> Result<(), String> {
+pub(crate) fn save_config(path: &Path, config: &Config) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -504,7 +504,10 @@ pub fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show-main" => show_main(app),
-            "exit-app" => app.exit(0),
+            "exit-app" => {
+                crate::overlay::flush_now();
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -712,17 +715,18 @@ pub fn pets_load(path: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn pets_save(path: String, settings: PetSettings) -> Result<Value, String> {
+pub fn pets_save(app: AppHandle, path: String, settings: PetSettings) -> Result<Value, String> {
     let target = pet_path(&path);
     let mut config = load_config(&target);
     settings
         .apply(&mut config)
         .map_err(|error| error.to_string())?;
     save_config(&target, &config)?;
+    crate::overlay::reload_fish(&app);
     pets_load(target.to_string_lossy().into_owned())
 }
 
-fn pet_path(path: &str) -> PathBuf {
+pub(crate) fn pet_path(path: &str) -> PathBuf {
     if path.trim().is_empty() {
         user_data_dir().join("wooden-fish.json")
     } else {

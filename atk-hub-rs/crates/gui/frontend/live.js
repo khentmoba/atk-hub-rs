@@ -867,6 +867,139 @@ async function saveHubSettings(patch = {}) {
 
 /* ----------------------------------------------------------------- pets -- */
 
+/* ------------------------------------------------ wooden fish & pet -- */
+
+const PET_ACTIONS = [["idle", "Idle"], ["waving", "Waving"], ["jumping", "Jumping"], ["running", "Running"], ["running-left", "Running left"], ["running-right", "Running right"], ["waiting", "Waiting"], ["review", "Review"], ["failed", "Failed"]];
+
+function meritStats(days, period) {
+  const entries = Object.entries(days ?? {});
+  const today = new Date();
+  const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const start = new Date(today);
+  if (period === "week") start.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  if (period === "month") start.setDate(1);
+  if (period === "year") start.setMonth(0, 1);
+  const from = period === "all" ? "" : key(start);
+  const picked = entries.filter(([day]) => day >= from);
+  const total = picked.reduce((sum, [, count]) => sum + (Number(count) || 0), 0);
+  const best = picked.reduce((top, entry) => (Number(entry[1]) > Number(top?.[1] ?? -1) ? entry : top), null);
+  return { total, days: picked.length, best };
+}
+
+export function companionCards() {
+  const o = state.overlay;
+  if (!o) return `<div class="notice">Loading wooden fish and desktop pet…</div>`;
+  const fish = o.fish ?? {};
+  const pet = o.pet ?? {};
+  const period = state.meritPeriod ?? "day";
+  const stats = meritStats(fish.days, period);
+  return `
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Wooden fish</h2><span>counts every key press</span></div>
+        ${toggle("Wooden fish enabled", "pet-enabled", fish.enabled)}
+        ${toggle("Show floating wooden fish", "pet-visible", fish.petVisible)}
+        ${toggle("Knock sound", "pet-sound", fish.sound)}
+        ${select("Skin", "fish-skin", [["default", "Classic"], ["white", "White"], ["orange", "Orange"]], fish.skin || "default")}
+        ${select("Merit period", "merit-period", [["day", "Today"], ["week", "This week"], ["month", "This month"], ["year", "This year"], ["all", "All time"]], period)}
+        <div class="stat-row"><span class="stat-label">Merit</span><span class="stat-value">${stats.total}</span></div>
+        <div class="stat-row"><span class="stat-label">Active days</span><span class="stat-value">${stats.days}</span></div>
+        <div class="stat-row"><span class="stat-label">Best day</span><span class="stat-value">${stats.best ? `${escapeHtml(stats.best[0])} · ${stats.best[1]}` : "—"}</span></div>
+        <div class="form-row"><label for="fish-sound-file">Custom knock sound ${o.customSound ? "<b>(in use)</b>" : ""}</label><input type="file" id="fish-sound-file" accept="audio/*" /></div>
+        <div class="actions">
+          <button class="button primary" type="button" data-pet-save>Save</button>
+          <button class="button" type="button" data-fish-tap>Knock</button>
+          <button class="button" type="button" data-fish-sound-clear ${o.customSound ? "" : "disabled"}>Default Sound</button>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Desktop pet</h2><span>Lv ${o.level ?? 1} · ${pet.xp ?? 0} XP</span></div>
+        ${toggle("Show desktop pet", "dp-visible", pet.visible)}
+        ${select("Size", "dp-scale", [50, 75, 100, 125, 150].map((n) => [n, `${n}%`]), pet.scale ?? 100)}
+        ${field("Name", "dp-name", pet.petName ?? "Aby")}
+        ${toggle("Always on top", "dp-top", pet.alwaysOnTop)}
+        ${toggle("Click-through", "dp-click", pet.clickThrough)}
+        ${toggle("Idle animations", "dp-auto", pet.autoPlay)}
+        ${toggle("React to keyboard and mouse", "dp-follow", pet.followInput)}
+        ${toggle("Show key hints", "dp-hints", pet.showKeyHints)}
+        ${toggle("Show name and level", "dp-level", pet.showLevel)}
+        ${select("Preview action", "dp-action", PET_ACTIONS, "waving")}
+        <div class="form-row"><label for="dp-sprite-file">Custom sprite sheet (PNG/WebP, 8×9 frames, ≤4 MB) ${o.customSprite ? "<b>(in use)</b>" : ""}</label><input type="file" id="dp-sprite-file" accept="image/png,image/webp" /></div>
+        <div class="actions">
+          <button class="button primary" type="button" data-dp-save>Save</button>
+          <button class="button" type="button" data-dp-play>Play Action</button>
+          <button class="button" type="button" data-dp-reset>Reset Position</button>
+          <button class="button" type="button" data-dp-sprite-clear ${o.customSprite ? "" : "disabled"}>Default Sprite</button>
+        </div>
+      </article>
+    </div>`;
+}
+
+function readFileUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function loadCompanions() {
+  try { state.overlay = await invoke("overlay_state"); } catch (error) { setStatus(errorText(error)); }
+  renderCompanions();
+}
+
+function renderCompanions() {
+  const box = $("companions");
+  if (box) box.innerHTML = companionCards();
+}
+
+function readPetPrefs() {
+  return {
+    ...(state.overlay?.pet ?? {}),
+    visible: checked("dp-visible"), scale: num("dp-scale", 100), petName: $("dp-name")?.value ?? "Aby",
+    alwaysOnTop: checked("dp-top"), clickThrough: checked("dp-click"), autoPlay: checked("dp-auto"),
+    followInput: checked("dp-follow"), showKeyHints: checked("dp-hints"), showLevel: checked("dp-level"),
+  };
+}
+
+async function companionClick(t) {
+  const d = t.dataset;
+  if ("petSave" in d) {
+    await guarded(t, async () => {
+      const settings = { ...(state.petState ?? {}), enabled: checked("pet-enabled"), petVisible: checked("pet-visible"), sound: checked("pet-sound"), skin: $("fish-skin")?.value ?? state.petState?.skin ?? "" };
+      state.petState = await call("pets_save", { path: state.petState?.path ?? state.info?.petPath ?? "", settings }, "Wooden fish settings saved");
+      show("output", state.petState);
+      await loadCompanions();
+    });
+    return true;
+  }
+  if ("fishTap" in d) { await guarded(t, async () => { await invoke("woodenfish_tap"); await loadCompanions(); }); return true; }
+  if ("fishSoundClear" in d) { await guarded(t, async () => { state.overlay = await call("woodenfish_sound_set", { data: null }, "Default knock sound restored"); renderCompanions(); }); return true; }
+  if ("dpSave" in d) { await guarded(t, async () => { state.overlay = await call("desktop_pet_set", { prefs: readPetPrefs() }, "Desktop pet saved"); renderCompanions(); }); return true; }
+  if ("dpPlay" in d) { await window.__TAURI__?.event?.emit("pet:play", $("dp-action")?.value ?? "waving"); return true; }
+  if ("dpReset" in d) { await guarded(t, () => call("desktop_pet_reset_position", {}, "Overlay positions reset")); return true; }
+  if ("dpSpriteClear" in d) { await guarded(t, async () => { state.overlay = await call("desktop_pet_upload", { data: null }, "Default sprite restored"); renderCompanions(); }); return true; }
+  return false;
+}
+
+async function companionFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    if (input.id === "fish-sound-file") {
+      if (file.size > 4 * 1024 * 1024) throw new Error("The sound must be 4 MB or smaller");
+      state.overlay = await call("woodenfish_sound_set", { data: await readFileUrl(file) }, "Custom knock sound saved");
+    } else {
+      if (file.size > 4 * 1024 * 1024) throw new Error("The sprite must be 4 MB or smaller");
+      state.overlay = await call("desktop_pet_upload", { data: await readFileUrl(file) }, "Custom sprite saved");
+    }
+    renderCompanions();
+  } catch (error) {
+    setStatus(errorText(error));
+  }
+}
+
 export function petControls() {
   const p = state.petState ?? {};
   return `
@@ -986,13 +1119,7 @@ export function wireLiveEvents() {
       });
     }
     if ("hubSettings" in d) return guarded(t, () => saveHubSettings());
-    if ("petSave" in d) {
-      return guarded(t, async () => {
-        const settings = { ...(state.petState ?? {}), enabled: checked("pet-enabled"), petVisible: checked("pet-visible"), sound: checked("pet-sound") };
-        state.petState = await call("pets_save", { path: state.petState?.path ?? state.info?.petPath ?? "", settings }, "Pet settings saved");
-        show("output", state.petState);
-      });
-    }
+    if (await companionClick(t)) return undefined;
     if (d.wallpaperApply !== undefined) {
       return guarded(t, async () => {
         const result = await call("wallpaper_apply", { url: d.wallpaperApply, apply: true }, "Wallpaper downloaded");
@@ -1024,6 +1151,8 @@ export function wireLiveEvents() {
       state.obKind = event.target.value;
       document.querySelectorAll("[data-ob]").forEach((el) => { el.hidden = el.dataset.ob !== state.obKind; });
     }
+    if (event.target.id === "fish-sound-file" || event.target.id === "dp-sprite-file") companionFile(event.target);
+    if (event.target.id === "merit-period") { state.meritPeriod = event.target.value; renderCompanions(); }
     if (event.target.id === "game-enabled") saveHubSettings({ gameSwitchEnabled: event.target.checked });
     if (event.target.id === "dpi-total") {
       document.querySelectorAll(".dpi-row").forEach((row) => row.classList.toggle("inactive", Number(row.dataset.stage) >= Number(event.target.value)));
@@ -1084,6 +1213,8 @@ export async function loadLivePage(pageId) {
       await readKeyboard();
       state.kbLoading = false;
     }
+  } else if (pageId === "pets") {
+    await loadCompanions();
   } else if (pageId === "games") {
     if (!state.gameRules) {
       state.gameRules = await invoke("game_rules_get").catch(() => []);

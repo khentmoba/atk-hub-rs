@@ -1,5 +1,5 @@
 import {
-  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls,
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -566,9 +566,9 @@ function petsPage() {
       <article class="card">
         <div class="card-title"><h2>Companion status</h2><span>wooden-fish</span></div>
         <div id="pet-summary">Loading companion settings…</div>
-        <div id="pet-controls" style="margin-top:14px">${petControls()}</div>
       </article>
-    </div>`;
+    </div>
+    <div id="companions" style="margin-top:16px">${companionCards()}</div>`;
 }
 
 function pluginsPage() {
@@ -1015,6 +1015,7 @@ function previewResponse(command, args) {
     endpoint_catalog: { firmwareBase: "https://api-hub-cloud.atk.pro/firmware" },
     music_status: false,
     pets_load: { enabled: true, visible: true, sound: true },
+    overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },
     config_load: "{\n\t\"atk_service_url\": \"https://bpcdn.atkgear.com\"\n}",
     update_check: { version: "3.2.31", url: "https://example.invalid/atk-hub.exe", sha512: "preview", size: 1234 },
     driver_metadata: { version: "1.0.0", file: "https://example.invalid/driver.zip" },

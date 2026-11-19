@@ -178,3 +178,29 @@ pub fn foreground_process() -> Option<String> {
             .map(str::to_owned)
     }
 }
+
+/// Whether a virtual key or mouse button is held right now.
+#[must_use]
+pub fn key_down(vk: u8) -> bool {
+    // SAFETY: GetAsyncKeyState has no preconditions for virtual-key codes.
+    let state =
+        unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(i32::from(vk)) };
+    state as u16 & 0x8000 != 0
+}
+
+/// Cursor position in physical screen pixels.
+#[must_use]
+pub fn cursor_position() -> Option<(i32, i32)> {
+    let mut point = windows::Win32::Foundation::POINT::default();
+    // SAFETY: GetCursorPos writes one POINT into the provided pointer.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&raw mut point) }.ok()?;
+    Some((point.x, point.y))
+}
+
+/// Today's local date as `YYYY-MM-DD`.
+#[must_use]
+pub fn local_date() -> String {
+    // SAFETY: GetLocalTime has no preconditions and returns a SYSTEMTIME.
+    let now = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!("{:04}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay)
+}

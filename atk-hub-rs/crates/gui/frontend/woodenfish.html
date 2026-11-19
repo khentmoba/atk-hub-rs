@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Wooden fish</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+    body { display: grid; place-items: center; font: 600 13px/1.2 "Segoe UI", system-ui, sans-serif; }
+    .wrap { position: relative; width: 150px; height: 170px; display: grid; place-items: center; }
+    .grip { position: absolute; inset: 0 0 auto 0; height: 26px; cursor: move; }
+    .count {
+      position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+      padding: 3px 10px; border-radius: 999px; background: rgba(20, 22, 28, 0.78); color: #fff; white-space: nowrap;
+    }
+    button { all: unset; cursor: pointer; display: block; }
+    svg { width: 112px; height: 100px; overflow: visible; }
+    .fish { transform-origin: 56px 60px; transition: transform 90ms ease-out; }
+    .hit .fish { transform: scale(0.94); }
+    .mallet { transform-origin: 104px 6px; transform: rotate(0deg); transition: transform 90ms ease-out; }
+    .hit .mallet { transform: rotate(-28deg); }
+    .plus {
+      position: absolute; top: 18px; left: 50%; color: #f5b041; font-size: 15px; pointer-events: none;
+      animation: rise 700ms ease-out forwards; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+    @keyframes rise { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, -34px); } }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="wrap">
+    <div class="grip" data-tauri-drag-region title="Drag to move"></div>
+    <button id="fish" type="button" aria-label="Knock the wooden fish">
+      <svg viewBox="0 0 112 100" aria-hidden="true">
+        <g class="fish">
+          <ellipse id="body" cx="56" cy="62" rx="44" ry="32" fill="#c8843f" stroke="#7a4a1d" stroke-width="3" />
+          <path id="mouth" d="M24 64 Q56 80 88 64" fill="none" stroke="#7a4a1d" stroke-width="4" stroke-linecap="round" />
+          <circle cx="56" cy="44" r="6" fill="#7a4a1d" />
+          <path d="M44 36 Q56 26 68 36" fill="none" stroke="#7a4a1d" stroke-width="2" opacity="0.6" />
+        </g>
+        <g class="mallet">
+          <rect x="70" y="2" width="38" height="6" rx="3" transform="rotate(32 104 6)" fill="#8d6e63" />
+          <ellipse cx="72" cy="26" rx="11" ry="8" transform="rotate(32 72 26)" fill="#5d4037" />
+        </g>
+      </svg>
+    </button>
+    <div class="count" id="count">Today 0</div>
+  </div>
+  <script>
+    const tauri = window.__TAURI__;
+    const invoke = (cmd, args) => tauri?.core?.invoke(cmd, args);
+    const SKINS = { white: ["#f3ead8", "#8a7f6a"], orange: ["#e8892e", "#8a4613"], default: ["#c8843f", "#7a4a1d"] };
+    let settings = { fish: { sound: true, skin: "default" }, customSound: false };
+    let customAudio = null;
+    let ctx = null;
+    let hitTimer = null;
+
+    function knockSound() {
+      if (!settings.fish?.sound) return;
+      if (customAudio) {
+        const a = customAudio.cloneNode();
+        a.play().catch(() => {});
+        return;
+      }
+      ctx ??= new AudioContext();
+      const now = ctx.currentTime;
+      for (const [freq, peak, dur] of [[720, 0.42, 0.16], [1140, 0.18, 0.095], [1870, 0.065, 0.045]]) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(peak, now + 0.002);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + dur + 0.02);
+      }
+    }
+
+    function applySettings(next) {
+      settings = next ?? settings;
+      const [fill, stroke] = SKINS[settings.fish?.skin] ?? SKINS.default;
+      document.getElementById("body").setAttribute("fill", fill);
+      document.getElementById("body").setAttribute("stroke", stroke);
+      document.getElementById("mouth").setAttribute("stroke", stroke);
+      const days = settings.fish?.days ?? {};
+      const today = Object.keys(days).sort().pop();
+      if (today) document.getElementById("count").textContent = `Today ${days[today]}`;
+      if (settings.customSound) {
+        invoke("woodenfish_sound_get").then((data) => { customAudio = data ? new Audio(data) : null; });
+      } else {
+        customAudio = null;
+      }
+    }
+
+    function onStrike({ count }) {
+      const wrap = document.getElementById("wrap");
+      wrap.classList.add("hit");
+      clearTimeout(hitTimer);
+      hitTimer = setTimeout(() => wrap.classList.remove("hit"), 110);
+      document.getElementById("count").textContent = `Today ${count}`;
+      const plus = document.createElement("div");
+      plus.className = "plus";
+      plus.textContent = "Merit +1";
+      wrap.appendChild(plus);
+      setTimeout(() => plus.remove(), 720);
+      knockSound();
+    }
+
+    document.getElementById("fish").addEventListener("click", () => invoke("woodenfish_tap"));
+    tauri?.event?.listen("woodenFish:strike", ({ payload }) => onStrike(payload));
+    tauri?.event?.listen("woodenFish:settings", ({ payload }) => applySettings(payload));
+    invoke("overlay_state")?.then(applySettings);
+  </script>
+</body>
+</html>
