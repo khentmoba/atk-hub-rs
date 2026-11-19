@@ -40,6 +40,18 @@ $zip = Join-Path $root 'atk-hub-rs-portable.zip'
 if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $package '*') -DestinationPath $zip -CompressionLevel Optimal
 
+$stub = Join-Path $binDir 'setup.exe'
+$stubBytes = [System.IO.File]::ReadAllBytes($stub)
+$zipBytes = [System.IO.File]::ReadAllBytes($zip)
+$marker = [System.Text.Encoding]::ASCII.GetBytes("ATK-SELF-EXTRACT-1`n")
+$combined = New-Object byte[] ($stubBytes.Length + $marker.Length + $zipBytes.Length)
+[Array]::Copy($stubBytes, 0, $combined, 0, $stubBytes.Length)
+[Array]::Copy($marker, 0, $combined, $stubBytes.Length, $marker.Length)
+[Array]::Copy($zipBytes, 0, $combined, $stubBytes.Length + $marker.Length, $zipBytes.Length)
+$single = Join-Path $root 'setup.exe'
+[System.IO.File]::WriteAllBytes($single, $combined)
+
 Write-Host "package: $package"
 Write-Host "zip:     $zip"
+Write-Host "single:  $single"
 Get-ChildItem -LiteralPath $package | Select-Object Name, Length | Format-Table -AutoSize

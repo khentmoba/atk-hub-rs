@@ -49,17 +49,18 @@ cargo run -p atk-cli --bin atk-hub-cli -- decode '{"id":3,"ok":true,"result":[]}
 
 ## Installer (no license or third-party tooling required)
 
-`setup.exe` is a small Rust installer built from the standard library only.
+`setup.exe` is a single-file Rust installer built from the standard library only.
+It carries the app binaries and logo inside itself, so no ZIP or other files are
+needed.
 
 ```
-powershell -File installer\build-package.ps1        # builds installer-package\ and atk-hub-rs-portable.zip
-installer-package\setup.exe                         # installs to %LOCALAPPDATA%\AtkVhub with a Start Menu shortcut
-installer-package\setup.exe --no-shortcut --target C:\Some\Folder
-installer-package\setup.exe --uninstall
+powershell -File installer\build-package.ps1   # produces .\setup.exe and installer-package\
+setup.exe                                       # installs to %LOCALAPPDATA%\AtkVhub with a Start Menu shortcut
+setup.exe --no-shortcut --target C:\Some\Folder
+setup.exe --uninstall
 ```
 
-The portable ZIP contains `setup.exe`, `atk-hub-rs.exe`, `atk-hub-cli.exe` and
-the docs. Installation is per-user, so no elevation or product key is needed;
+Installation is per-user, so no elevation or product key is needed;
 the optional Windows service registration remains a separate explicit command
 (`atk-hub-cli service install --app <path>`).
 

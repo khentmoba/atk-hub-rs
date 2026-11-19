@@ -20,11 +20,13 @@ const SHORTCUT_NAME: &str = "ATK HUB (Rust).lnk";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Portable package used when setup.exe is run by itself.
 const RELEASE_ZIP_URL: &str =
-    "https://github.com/khentmoba/atk-hub-rs/releases/download/v0.1.3/atk-hub-rs-portable.zip";
+    "https://github.com/khentmoba/atk-hub-rs/releases/download/v0.1.4/atk-hub-rs-portable.zip";
 /// Log written beside the system temp directory.
 const LOG_NAME: &str = "atk-hub-rs-setup.log";
 /// Logo shown by the installer and shipped in the portable package.
 pub const LOGO_NAME: &str = "atk-hub-logo.png";
+/// Marker separating the installer executable from its embedded ZIP payload.
+const EMBED_MARKER: &[u8] = b"ATK-SELF-EXTRACT-1\n";
 
 /// Failures during install or uninstall.
 #[derive(Debug, Error)]
@@ -193,6 +195,35 @@ pub fn show_logo(image: &Path) {
     let _ = hidden_powershell(&script);
 }
 
+fn extract_embedded_payload(destination: &Path) -> Result<bool, InstallError> {
+    let executable = std::env::current_exe()?;
+    let bytes = fs::read(executable)?;
+    let Some(position) = bytes
+        .windows(EMBED_MARKER.len())
+        .rposition(|window| window == EMBED_MARKER)
+    else {
+        return Ok(false);
+    };
+    let payload = &bytes[position + EMBED_MARKER.len()..];
+    if payload.is_empty() {
+        return Ok(false);
+    }
+
+    let archive = destination.join("embedded.zip");
+    fs::write(&archive, payload)?;
+    let extract = format!(
+        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+        quote(&archive),
+        quote(destination)
+    );
+    if !hidden_powershell(&extract)? {
+        return Err(InstallError::Bootstrap {
+            detail: "embedded extraction failed".to_owned(),
+        });
+    }
+    Ok(true)
+}
+
 /// Returns a directory containing the portable package.
 ///
 /// When `setup.exe` is run alone, it downloads and extracts the release ZIP
@@ -206,10 +237,16 @@ pub fn bootstrap(source: &Path) -> Result<PathBuf, InstallError> {
         return Ok(source.to_path_buf());
     }
 
-    log_line("package files missing beside setup.exe, downloading portable zip");
     let temporary = std::env::temp_dir().join("atk-hub-rs-bootstrap");
     let _ = fs::remove_dir_all(&temporary);
     fs::create_dir_all(&temporary)?;
+
+    if extract_embedded_payload(&temporary)? {
+        log_line("extracted embedded package from setup.exe");
+        return Ok(temporary);
+    }
+
+    log_line("no embedded package found, downloading portable zip");
     let archive = temporary.join("package.zip");
     let download = format!(
         "Invoke-WebRequest -Uri '{RELEASE_ZIP_URL}' -OutFile '{}' -UseBasicParsing",
