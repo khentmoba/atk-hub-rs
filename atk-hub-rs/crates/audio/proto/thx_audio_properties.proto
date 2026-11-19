@@ -1,0 +1,676 @@
+/**
+* @version: 1.3.0 (2026-04-30) 
+*/
+
+syntax = "proto3";
+
+package thx.proto;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";	
+
+/**
+* ThxAudioProperties is a service that allows to manage properties and presets of a thx audio service
+*/
+service ThxAudioProperties {
+
+	/**
+	* Get the list of available endpoints
+	*/
+	rpc GetEndpointList (GetEndpointListRequest) returns (GetEndpointListResponse);
+
+	/**
+	* Get endpoint info (description, active state) for a specific endpoint
+	*/
+	rpc GetEndpoint (GetEndpointRequest) returns (Endpoint);
+
+	/**
+	* Get the list of ids for all available properties
+	*/
+	rpc GetPropertyList (GetPropertyListRequest) returns (GetPropertyListResponse);
+
+	/**
+	* Get the definition of a property
+	*/
+	rpc GetPropertyDefinition (GetPropertyDefinitionRequest) returns (PropertyDefinition);
+
+	/**
+	* Get the value of a property
+	*/
+	rpc GetProperty (GetPropertyRequest) returns (Property);
+
+	/**
+	* Set the value of a property
+	*/
+	rpc SetProperty (SetPropertyRequest) returns (google.protobuf.Empty);
+	
+	/**
+	* Subscribe to property changes
+	*/
+	rpc SubscribeToPropertyChanges(SubscribeToPropertyChangesRequest) returns (stream Property);
+
+	/**
+	* Stream high-frequency headtracking pose data
+	*/
+	rpc StreamPose(StreamPoseRequest) returns (stream StreamPoseResponse);
+
+	/**
+	* Get the list of ids for all available presets for a specific preset group 
+	*/
+	rpc GetPresetList(GetPresetListRequest) returns (GetPresetListResponse);
+
+	/**
+	* Get the list of available preset groups
+	*/
+	rpc GetPresetGroupList(GetPresetGroupListRequest) returns (GetPresetGroupListResponse);
+
+	/**
+	* Get metadata describing a preset group
+	*/
+	rpc GetPresetGroupDefinition(GetPresetGroupDefinitionRequest) returns (GetPresetGroupDefinitionResponse);
+
+	/**
+	* Get the current preset for a specific preset group
+	*/	
+	rpc SelectPreset(SelectPresetRequest) returns (SelectPresetResponse);
+
+	/**
+	* Get the current preset for a specific preset group
+	*/
+	rpc GetSelectedPreset(GetSelectedPresetRequest) returns (GetSelectedPresetResponse);
+
+	/**
+	* Save a specific preset using the current property values
+	*/
+	rpc SavePreset(SavePresetRequest) returns (google.protobuf.Empty);
+
+	/**
+	* Reset a preset to its default values. The selected preset will re-apply its properties
+	*/
+	rpc ResetPreset(ResetPresetRequest) returns (google.protobuf.Empty);
+
+	/**
+	* Add a new preset to the preset group, the updated preset list is returned
+	*/
+	rpc AddPreset(AddPresetRequest) returns (AddPresetResponse);
+
+	/**
+	* Remove a preset from the preset group, the updated preset list is returned
+	*/
+	rpc RemovePreset(RemovePresetRequest) returns (RemovePresetResponse);
+
+	/**
+	* Get the description of a preset
+	*/
+	rpc GetPresetDescription(GetPresetDescriptionRequest) returns (GetPresetDescriptionResponse);
+
+	/**
+	* Get the display name of a preset
+	*/
+	rpc GetPresetName(GetPresetNameRequest) returns (GetPresetNameResponse);
+
+	/**
+	* Parse a preset from a JSON string without importing it
+	*/
+	rpc ParsePreset(ParsePresetRequest) returns (ParsePresetResponse);
+
+	/**
+	* Export a preset as a JSON string
+	*/
+	rpc ExportPreset(ExportPresetRequest) returns (ExportPresetResponse);
+
+	/**
+	* Import a preset from a JSON string
+	*/
+	rpc ImportPreset(ImportPresetRequest) returns (ImportPresetResponse);
+
+	/*
+	* Check if a preset can be reset
+	*/
+	rpc ResetPresetAllowed(PresetResetAllowedRequest) returns (PresetResetAllowedResponse);
+
+	/**
+	* Subscribe to preset changes with one of the following events: Added, Removed, Selected
+	*/
+	rpc SubscribeToPresetChanges(SubscribeToPresetChangesRequest) returns (stream PresetChange);
+
+	/**
+	* Subscribe to endpoint changes (added, active state changed, description changed)
+	*/
+	rpc SubscribeToEndpointChanges(SubscribeToEndpointChangesRequest) returns (stream EndpointChange);
+
+	/**
+	* Get the product version
+	*/
+	rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+
+	// ==========================================
+	// Application property access RPCs (for app clients)
+	// ==========================================
+
+	/**
+	* Get the list of active application groups.
+	*/
+	rpc GetApplicationList(GetApplicationListRequest) returns (GetApplicationListResponse);
+
+	/**
+	* Get metadata for a specific application.
+	*/
+	rpc GetApplicationInfo(GetApplicationInfoRequest) returns (ApplicationInfo);
+
+	/**
+	* Get the value of an application property.
+	*/
+	rpc GetApplicationProperty(GetApplicationPropertyRequest) returns (Property);
+
+	/**
+	* Subscribe to application changes (application created/deleted or application info updated).
+	*/
+	rpc SubscribeToApplicationListChanges(SubscribeToApplicationListChangesRequest) returns (stream ApplicationListChange);
+
+	/**
+	* Subscribe to aggregated application property changes.
+	*/
+	rpc SubscribeToApplicationPropertyChanges(SubscribeToApplicationPropertyChangesRequest) returns (stream ApplicationPropertyChange);
+}
+
+message GetEndpointListRequest {
+	// The type of the endpoint
+	string type = 1;
+}
+
+message GetEndpointListResponse {
+	// List of endpoint ids
+	repeated string endpoint_ids = 1;
+}
+
+message GetEndpointRequest {
+	string endpoint_id = 1;
+}
+
+message Endpoint {
+	string id = 1;
+	string description = 2;
+	bool active = 3;
+}
+
+message SubscribeToEndpointChangesRequest {
+	// Empty for now; could add type filter later
+}
+
+message StreamPoseRequest { 
+	// Empty for now
+}
+
+message StreamPoseResponse {
+	float rotation_w = 1;
+	float rotation_x = 2;
+	float rotation_y = 3;
+	float rotation_z = 4;
+	float pos_x = 5;
+	float pos_y = 6;
+	float pos_z = 7;
+}
+
+message EndpointChange {
+	enum Event {
+		Added = 0;
+		ActiveChanged = 1;
+		DescriptionChanged = 2;
+	}
+	Event event = 1;
+	string endpoint_id = 2;
+	string description = 3;
+	bool active = 4;
+}
+
+message GetPropertyListRequest {
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 1;
+}
+
+message GetPropertyListResponse {
+	// List of property ids
+	repeated string properties = 1; 
+}
+
+message GetPropertyDefinitionRequest {
+	// The id of the property to get the definition for
+	string id = 1;
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+}
+
+message GetPropertyRequest {
+	// The id of the property to get the value for
+	string id = 1;
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+}
+
+message SetPropertyRequest {
+	// The property with its containing value to set
+	Property property = 1;
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+}
+
+/**
+* Property types
+*/
+enum PropertyType {
+	PropertyType_None = 0; // This is our null property
+	PropertyType_Bool = 1; // Boolean property
+	PropertyType_Int = 2; // Integer property
+	PropertyType_Float = 3; // Float property
+	PropertyType_String = 4; // String property
+	PropertyType_StringArray = 5; // Fixed size array of bool values
+	PropertyType_FloatArray = 6; // Fixed size array of float values
+	PropertyType_Any = 7; // Special type that can hold any protobuf message
+	PropertyType_Event = 8; // Event with no value
+
+	PropertyType_Count = 9;	// Number of property types
+}
+
+/**
+* Property categories to distinguish control properties from feedback properties
+*/
+enum PropertyCategory {
+	PropertyCategory_Control = 0;  // User-settable property (default)
+	PropertyCategory_Feedback = 1; // Producer-owned, read-only feedback
+}
+
+/**
+* A property is an identifiable and inspectable value that can be set and retrieved
+*/
+message Property {
+	string id = 1; // The id of the property
+	PropertyType type = 2; // The type of the property
+
+	optional float float_value = 3; // The value of the property if it is a float
+	optional int64 int_value = 4; // The value of the property if it is an int
+	optional bool bool_value = 5; // The value of the property if it is a bool
+	optional string string_value = 6; // The value of the property if it is a string
+	repeated string string_array_value = 7; // The value of the property if it is a string array
+	repeated float float_array_value = 8; // The value of the property if it is a float array
+	optional google.protobuf.Any any_value = 9; // The value of the property if it is of any type
+};
+
+/**
+* The definition of a property including its type and traits depending on the type
+*/
+message PropertyDefinition {
+	string id = 1;
+	PropertyType type = 2;
+
+	optional BoolPropertyTraits bool_traits = 3; // Traits for bool properties 
+	optional FloatPropertyTraits float_traits = 4; // Traits for float properties
+	optional IntPropertyTraits int_traits = 5; // Traits for int properties
+	optional StringPropertyTraits string_traits = 6; // Traits for string properties
+	optional StringArrayPropertyTraits string_array_traits = 7; // Traits for string array properties
+	optional FloatArrayPropertyTraits float_array_traits = 8; // Traits for float array properties
+	optional AnyPropertyTraits any_traits = 12; // Traits for any type properties
+
+	bool is_volatile = 9; // Tells if the property is non-persistent, goes back to default on restart
+	string validator = 10; // Description of a validator for the property value (e.g. a json schema for string properties)
+	PropertyCategory category = 11; // Category of the property (Control or Feedback)
+};
+
+
+/**
+* Traits for the bool property
+*/
+message BoolPropertyTraits {
+	bool default_value = 1; // The default value of the property
+};
+
+/**
+* Traits for the float property
+*/
+message FloatPropertyTraits {
+	float min_value = 1; // The minimum value of the property
+	float max_value = 2; // The maximum value of the property
+	float step = 3; // The step value of the property
+	float default_value = 4; // The default value of the property
+};
+
+/**
+* Traits for the int property
+*/
+message IntPropertyTraits {
+	int64 min_value = 1; // The minimum value of the property
+	int64 max_value = 2; // The maximum value of the property
+	int64 default_value = 4; // The default int value of the property
+};
+
+/**
+* Traits for the string property
+*/
+message StringPropertyTraits {
+	string default_value = 1; // The default string value of the property
+	repeated string allowed_values = 2; // The allowed values of the property
+};
+
+/**
+* Traits for the bool array property
+*/
+message StringArrayPropertyTraits {
+	int32 size = 1; // The size of the array
+	repeated string default_value = 2; // The default string array value of the property
+	repeated string allowed_values = 3; // The allowed values of the property
+};
+
+/**
+* Traits for the float array property
+*/
+message FloatArrayPropertyTraits {
+	float min_value = 1; // The minimum value of the property
+	float max_value = 2; // The maximum value of the property
+	float step = 3; // The step value of the property
+	int32 size = 4; // The size of the array
+	repeated float default_value = 5; // The default float array value of the property
+};
+
+/**
+* Traits for the any property
+*/
+message AnyPropertyTraits {
+	google.protobuf.Any default_value = 1; // The default any value of the property
+	string proto_descriptor = 2; // Fully qualified proto3 definition including "syntax = \"proto3\"; package thx.proto;" prefix
+	string proto_type_name = 3; // The protobuf type name of the message type stored in the any property
+}
+
+message SubscribeToPropertyChangesRequest {
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 1;
+}
+
+//
+// Preset management
+//
+
+message GetPresetListRequest {
+	string preset_group_id = 1; // The id of the preset group
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+}
+
+message GetPresetListResponse {
+	repeated string preset_ids = 1; // List of preset ids
+	string preset_group_id = 2; // The id of the preset group
+}
+
+message GetPresetGroupListRequest {
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id = 1;
+}
+
+message GetPresetGroupListResponse {
+	repeated string preset_group_ids = 1; // List of preset group ids
+}
+
+message GetPresetGroupDefinitionRequest {
+	string preset_group_id = 1; // The id of the preset group
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id = 2;
+}
+
+message GetPresetGroupDefinitionResponse {
+	string preset_group_id = 1; // The id of the preset group
+	string default_preset_id = 2; // The default preset id for this group
+	repeated string property_list = 3; // List of property ids managed by the group
+	repeated string child_preset_groups = 4; // List of child preset group ids
+	bool is_top_level = 5; // Whether this is a top-level preset group
+	int32 revision = 6; // The revision of this preset group definition
+	string name = 7; // The display name of the preset group
+}
+
+message SelectPresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message SelectPresetResponse {
+	repeated string warnings = 1; // Warnings encountered during preset selection
+}
+
+message GetSelectedPresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+}
+
+message GetSelectedPresetResponse {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+}
+
+message SavePresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message ResetPresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message AddPresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string source_preset_id = 2; // The id of the preset to copy
+	string preset_id = 3; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 4;
+
+	optional string description = 5; // The description of the preset
+	optional string name = 6; // The display name of the preset
+}
+
+message AddPresetResponse {
+	repeated string preset_ids = 1; // List of preset ids
+}
+
+message RemovePresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message RemovePresetResponse {
+	repeated string preset_ids = 1; // List of preset ids
+}
+
+message GetPresetDescriptionRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message GetPresetDescriptionResponse {
+	string description = 1; // The description of the preset
+}
+
+message GetPresetNameRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message GetPresetNameResponse {
+	string name = 1; // The display name of the preset
+}
+
+message ExportPresetRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message ExportPresetResponse {
+	string preset_json = 1; // The exported preset in JSON format
+}
+
+message ParsePresetRequest {
+	string preset_json = 1; // The preset in JSON format to parse
+}
+
+message ParsePresetResponse {
+	string preset_group_id = 1; // The id of the preset group the preset would be imported into
+	string preset_id = 2; // The id of the preset
+	int32 group_revision = 3; // The group_revision of the preset
+	string name = 4; // The display name of the preset
+	string description = 5; // The description of the preset
+	repeated Property properties = 6; // List of properties contained in the preset with their values
+
+}
+
+message ImportPresetRequest {
+	string preset_json = 1; // The preset in JSON format to import
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 2;
+
+	bool overwrite_existing = 3; // Whether to overwrite an existing preset with the same id
+}
+
+message ImportPresetResponse {
+	string preset_group_id = 1; // The id of the preset group the preset was imported into
+	string preset_id = 2; // The id of the imported preset
+	int32 group_revision = 3; // The group_revision of the imported preset
+	bool already_existing = 4; // Whether the preset already existed and was overwritten
+}
+
+message PresetResetAllowedRequest {
+	string preset_group_id = 1; // The id of the preset group
+	string preset_id = 2; // The id of the preset
+
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id  = 3;
+}
+
+message PresetResetAllowedResponse {
+	bool allowed = 1; // The description of the preset
+}
+
+message SubscribeToPresetChangesRequest {
+	// The handle of the property service, the global property service is used if not set
+	optional string endpoint_id = 1;
+}
+
+/**
+* Represent a preset related change: Added, Removed, Selected,...
+*/
+message PresetChange {
+	enum Event {
+		Added = 0; // The preset was added
+		Removed = 1; // The preset was removed
+		Selected = 2; // The preset was selected
+		Updated = 3; // The preset values changed
+	}
+	Event event = 1; // The event that occurred
+	string preset_group_id = 2; // The id of the preset group that changed
+	string preset_id = 3; // The id of the preset
+}
+
+message GetVersionRequest {
+	// Currently empty, product version is bound to the service
+}
+
+message GetVersionResponse {
+	string version = 1; // Product version
+}
+
+// ==========================================
+// Application property messages (for app clients)
+// ==========================================
+
+message GetApplicationListRequest {
+	// The handle of the property service
+	optional string endpoint_id = 1;
+}
+
+message ApplicationInfo {
+	string id = 1;
+	string name = 2;
+	uint32 process_pid = 3;
+	string process_filename = 4;
+	int32 stream_count = 5;
+	bool has_offload_stream = 6;
+}
+
+message GetApplicationListResponse {
+	// List of active application ids
+	repeated string application_ids = 1;
+}
+
+message GetApplicationInfoRequest {
+	// The handle of the property service
+	optional string endpoint_id = 1;
+	// The id of the application
+	string application_id = 2;
+}
+
+message GetApplicationPropertyRequest {
+	// The handle of the property service
+	optional string endpoint_id = 1;
+	// The id of the application
+	string application_id = 2;
+	// The id of the property to get
+	string id = 3;
+}
+
+message SubscribeToApplicationListChangesRequest {
+	// The handle of the property service
+	optional string endpoint_id = 1;
+}
+
+enum ApplicationListChangeType {
+	APPLICATION_CREATED = 0;
+	APPLICATION_DELETED = 1;
+	APPLICATION_UPDATED = 2;
+}
+
+message ApplicationListChange {
+	// The id of the application that was created, deleted, or updated
+	string application_id = 1;
+	// The type of change
+	ApplicationListChangeType change_type = 2;
+}
+
+message SubscribeToApplicationPropertyChangesRequest {
+	// The handle of the property service
+	optional string endpoint_id = 1;
+}
+
+message ApplicationPropertyChange {
+	// The id of the application
+	string application_id = 1;
+	// The id of the property that changed
+	string property_id = 2;
+	// The property with its new value
+	Property property = 3;
+}

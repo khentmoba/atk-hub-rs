@@ -1,0 +1,33 @@
+[package]
+name = "atk-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Full Rust GUI for the ATK HUB port"
+
+[lib]
+name = "atk_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atk-hub-rs"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.35"
+egui = "0.35"
+serde_json.workspace = true
+atk-agent.workspace = true
+atk-asar.workspace = true
+atk-config.workspace = true
+atk-endpoints.workspace = true
+atk-ipc.workspace = true
+atk-wallpaper.workspace = true
+atk-audio.workspace = true
+atk-features.workspace = true
+atk-input.workspace = true
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+# Rust build output and packaged binaries
+target/
+**/target/
+installer-package/
+*.zip
+*.exe
+*.dll
+*.pdb
+
+# Local logs and editor/OS noise
+*.log
+.DS_Store
+Thumbs.db

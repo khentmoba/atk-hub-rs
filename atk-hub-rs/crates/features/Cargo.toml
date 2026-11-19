@@ -1,0 +1,21 @@
+[package]
+name = "atk-features"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Feature logic behind the ATK HUB Rust GUI pages"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ureq = "2.12"
+sha2 = "0.10"
+zip = "2.4"
+atk-asar.workspace = true
+atk-config.workspace = true
+atk-endpoints.workspace = true
+
+[lints]
+workspace = true

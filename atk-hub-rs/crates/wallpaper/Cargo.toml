@@ -1,0 +1,17 @@
+[package]
+name = "atk-wallpaper"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Wallpaper catalogue client for the ATK HUB Rust port"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ureq = "2.12"
+atk-endpoints.workspace = true
+
+[lints]
+workspace = true

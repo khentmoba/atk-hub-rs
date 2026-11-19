@@ -1,0 +1,12 @@
+[package]
+name = "atk-endpoints"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Remote URL templates used by ATK HUB"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "atk-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Headless command line front end for the ATK HUB Rust core"
+
+[[bin]]
+name = "atk-hub-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde_json.workspace = true
+atk-agent.workspace = true
+atk-asar.workspace = true
+atk-config.workspace = true
+atk-endpoints.workspace = true
+atk-ipc.workspace = true
+atk-wallpaper.workspace = true
+atk-audio.workspace = true
+atk-features.workspace = true
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net"] }
+
+[lints]
+workspace = true

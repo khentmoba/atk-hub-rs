@@ -1,0 +1,12 @@
+[package]
+name = "atk-ipc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "IPC channel registry recovered from ATK HUB's Electron main process"
+
+[dependencies]
+
+[lints]
+workspace = true

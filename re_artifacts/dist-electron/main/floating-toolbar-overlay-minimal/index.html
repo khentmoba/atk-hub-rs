@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>划词 · 独立浮窗</title>
+    <link rel="stylesheet" href="./overlay.css" />
+  </head>
+  <body>
+    <div class="hdr">
+      <span>划词 · 独立浮窗</span><span class="badge" id="cnt">0 字</span>
+    </div>
+    <div class="body">
+      <pre id="x"></pre>
+      <div class="row">
+        <button type="button" class="btn btn-p" id="copy">复制全文</button>
+        <button type="button" class="btn btn-s" id="hub">打开划词设置</button>
+        <button type="button" class="btn btn-g" id="close">关闭</button>
+      </div>
+      <p class="hint">由主进程加载静态 HTML/CSS/JS；锚点贴近划选松手或鼠标位置。</p>
+    </div>
+    <script src="./overlay.js"></script>
+  </body>
+</html>

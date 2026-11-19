@@ -1,0 +1,17 @@
+[package]
+name = "atk-agent"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Named-pipe wire protocol of the ATK HUB Rust agent"
+
+[dependencies]
+atk-ipc.workspace = true
+named_pipe = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

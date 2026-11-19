@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/asar",
+    "crates/config",
+    "crates/endpoints",
+    "crates/ipc",
+    "crates/agent",
+    "crates/cli",
+    "crates/gui",
+    "crates/wallpaper",
+    "crates/audio",
+    "crates/features",
+    "crates/input",
+    "crates/installer",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+
+atk-asar = { path = "crates/asar" }
+atk-config = { path = "crates/config" }
+atk-endpoints = { path = "crates/endpoints" }
+atk-ipc = { path = "crates/ipc" }
+atk-agent = { path = "crates/agent" }
+atk-wallpaper = { path = "crates/wallpaper" }
+atk-audio = { path = "crates/audio" }
+atk-features = { path = "crates/features" }
+atk-input = { path = "crates/input" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
