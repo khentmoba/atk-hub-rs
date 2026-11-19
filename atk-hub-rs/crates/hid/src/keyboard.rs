@@ -29,6 +29,9 @@ mod cmd {
     pub const LIGHTING_GET: u8 = 8;
     pub const LAYER_COUNT: u8 = 17;
     pub const GET_BUFFER: u8 = 18;
+    pub const MACRO_BUFFER_SIZE: u8 = 13;
+    pub const MACRO_GET_BUFFER: u8 = 14;
+    pub const MACRO_SET_BUFFER: u8 = 15;
 }
 
 mod sub {
@@ -43,6 +46,116 @@ mod sub {
     pub const LIGHT_OFF: u8 = 38;
     pub const REPORT_RATE: u8 = 70;
     pub const RESTART: u8 = 78;
+    pub const MACRO: u8 = 77;
+}
+
+/// Onboard macro slots on BITYUAN keyboards.
+pub const MACRO_SLOTS: usize = 8;
+
+/// One key event of an onboard keyboard macro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacroAction {
+    /// Press (`true`) or release.
+    pub down: bool,
+    /// Basic HID keycode, or 209-213 for left/right/middle/back/forward mouse buttons.
+    pub code: u8,
+    /// Delay after this event in milliseconds.
+    pub delay_ms: u16,
+}
+
+/// One onboard macro slot with its playback mode.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardMacro {
+    /// Key events in order.
+    pub actions: Vec<MacroAction>,
+    /// Playback mode 1-6: run N times and stop at once, continue, stop,
+    /// finish the round, loop until next press, loop with no stop condition.
+    pub mode: u8,
+    /// Repeat count.
+    pub count: u8,
+}
+
+/// Encodes macros into the VIA dynamic macro buffer: `[1, 2|3, code]` key
+/// events each followed by `[1, 4, lo+1, hi+1]` delays, macros separated by 0.
+#[must_use]
+pub fn encode_macros(macros: &[KeyboardMacro]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for slot in 0..MACRO_SLOTS {
+        if let Some(entry) = macros.get(slot) {
+            for action in &entry.actions {
+                out.extend_from_slice(&[1, if action.down { 2 } else { 3 }, action.code]);
+                let [lo, hi] = action.delay_ms.to_le_bytes();
+                out.extend_from_slice(&[1, 4, lo.saturating_add(1), hi.saturating_add(1)]);
+            }
+        }
+        out.push(0);
+    }
+    out
+}
+
+/// Decodes the VIA dynamic macro buffer into [`MACRO_SLOTS`] macros.
+#[must_use]
+pub fn decode_macros(buffer: &[u8]) -> Vec<Vec<MacroAction>> {
+    let mut macros = Vec::new();
+    let mut current = Vec::new();
+    let mut index = 0;
+    while index < buffer.len() && macros.len() < MACRO_SLOTS {
+        match buffer[index] {
+            0 => {
+                macros.push(std::mem::take(&mut current));
+                index += 1;
+            }
+            1 => match buffer.get(index + 1).copied() {
+                Some(code @ 1..=3) => {
+                    let key = buffer.get(index + 2).copied().unwrap_or(0);
+                    if code == 1 {
+                        current.push(MacroAction {
+                            down: true,
+                            code: key,
+                            delay_ms: 0,
+                        });
+                        current.push(MacroAction {
+                            down: false,
+                            code: key,
+                            delay_ms: 0,
+                        });
+                    } else {
+                        current.push(MacroAction {
+                            down: code == 2,
+                            code: key,
+                            delay_ms: 0,
+                        });
+                    }
+                    index += 3;
+                }
+                Some(4) => {
+                    let lo = buffer
+                        .get(index + 2)
+                        .copied()
+                        .unwrap_or(1)
+                        .saturating_sub(1);
+                    let hi = buffer
+                        .get(index + 3)
+                        .copied()
+                        .unwrap_or(1)
+                        .saturating_sub(1);
+                    if let Some(last) = current.last_mut() {
+                        last.delay_ms = u16::from_le_bytes([lo, hi]);
+                    }
+                    index += 4;
+                }
+                Some(5..=7) => index += 4,
+                _ => index += 2,
+            },
+            _ => index += 1,
+        }
+    }
+    while macros.len() < MACRO_SLOTS {
+        macros.push(Vec::new());
+    }
+    macros
 }
 
 /// Flash operation flag of chunked travel / rapid-trigger writes.
@@ -444,6 +557,75 @@ impl<T: Transport> Keyboard<T> {
         self.request(&[cmd::KEYMAP_RESET]).map(drop)
     }
 
+    /// Reads all onboard macros with their playback modes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn macros(&mut self) -> Result<Vec<KeyboardMacro>, HidError> {
+        let size = usize::from(be(&self.request(&[cmd::MACRO_BUFFER_SIZE])?, 1));
+        let mut buffer = Vec::with_capacity(size);
+        while buffer.len() < size {
+            let len = (size - buffer.len()).min(28);
+            let [hi, lo] = u16::try_from(buffer.len())
+                .unwrap_or(u16::MAX)
+                .to_be_bytes();
+            #[allow(clippy::cast_possible_truncation)]
+            let reply = self.request(&[cmd::MACRO_GET_BUFFER, hi, lo, len as u8])?;
+            buffer.extend((0..len).map(|index| reply.get(4 + index).copied().unwrap_or(0)));
+            if buffer.iter().filter(|byte| **byte == 0).count() > MACRO_SLOTS {
+                break;
+            }
+        }
+        let mut out = Vec::with_capacity(MACRO_SLOTS);
+        for (slot, actions) in decode_macros(&buffer).into_iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let config = self.get(sub::MACRO, &[slot as u8]).unwrap_or_default();
+            out.push(KeyboardMacro {
+                actions,
+                mode: config
+                    .get(4)
+                    .copied()
+                    .filter(|m| (1..=6).contains(m))
+                    .unwrap_or(1),
+                count: config.get(5).copied().unwrap_or(1),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Writes all onboard macros and their playback modes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the macros do not fit the keyboard's buffer or
+    /// the transport fails.
+    pub fn set_macros(&mut self, macros: &[KeyboardMacro]) -> Result<(), HidError> {
+        let bytes = encode_macros(macros);
+        let size = usize::from(be(&self.request(&[cmd::MACRO_BUFFER_SIZE])?, 1));
+        if size > 0 && bytes.len() > size {
+            return Err(HidError::Invalid(format!(
+                "macros need {} bytes but the keyboard stores {size}",
+                bytes.len()
+            )));
+        }
+        for (index, chunk) in bytes.chunks(28).enumerate() {
+            let [hi, lo] = u16::try_from(index * 28).unwrap_or(u16::MAX).to_be_bytes();
+            #[allow(clippy::cast_possible_truncation)]
+            let mut report = vec![cmd::MACRO_SET_BUFFER, hi, lo, chunk.len() as u8];
+            report.extend_from_slice(chunk);
+            self.request(&report)?;
+        }
+        for (slot, entry) in macros.iter().enumerate().take(MACRO_SLOTS) {
+            #[allow(clippy::cast_possible_truncation)]
+            self.set(
+                sub::MACRO,
+                &[slot as u8, entry.mode.clamp(1, 6), entry.count.max(1)],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Reads the main backlight.
     ///
     /// # Errors
@@ -790,6 +972,32 @@ mod tests {
                 cols,
             }),
         )
+    }
+
+    #[test]
+    fn macro_buffer_round_trips() {
+        let macros = vec![KeyboardMacro {
+            actions: vec![
+                MacroAction {
+                    down: true,
+                    code: 4,
+                    delay_ms: 300,
+                },
+                MacroAction {
+                    down: false,
+                    code: 4,
+                    delay_ms: 20,
+                },
+            ],
+            mode: 1,
+            count: 1,
+        }];
+        let bytes = encode_macros(&macros);
+        assert_eq!(&bytes[..7], &[1, 2, 4, 1, 4, 45, 2]);
+        assert_eq!(bytes.iter().filter(|b| **b == 0).count(), MACRO_SLOTS);
+        let decoded = decode_macros(&bytes);
+        assert_eq!(decoded[0], macros[0].actions);
+        assert!(decoded[1].is_empty());
     }
 
     #[test]

@@ -1018,6 +1018,7 @@ function previewResponse(command, args) {
     music_status: false,
     pets_load: { enabled: true, visible: true, sound: true },
     pc_script_get_state: { platformOk: true, running: false, config: { enabled: false, resumeOnStartup: true, activeProfileId: "p1", profiles: [{ id: "p1", name: "Default", luaScript: "function on_tick()\n  if pc_rmb_pressed() and pc_lmb_pressed() then\n    input.move_rel(0, 3)\n  end\nend", enabled: false }], profileForegroundExes: {} }, profileTickErrors: {} },
+    kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },
     config_load: "{\n\t\"atk_service_url\": \"https://bpcdn.atkgear.com\"\n}",

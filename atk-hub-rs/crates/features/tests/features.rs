@@ -145,6 +145,7 @@ fn game_rule_matching_ignores_case() {
     let rules = vec![atk_features::GameRule {
         exe: "Game.exe".into(),
         profile: 2,
+        keyboard_profile: None,
     }];
     assert_eq!(
         atk_features::match_game_rule(&rules, "game.EXE").map(|rule| rule.profile),

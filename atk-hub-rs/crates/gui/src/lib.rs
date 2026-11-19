@@ -985,6 +985,8 @@ pub fn run() {
             overlay::desktop_pet_upload,
             live::mouse_list,
             live::kb_list,
+            live::kb_macros,
+            live::kb_set_macros,
             live::kb_snapshot,
             live::kb_keymap,
             live::kb_set_key,
@@ -1058,6 +1060,7 @@ pub fn run() {
             live::spawn_game_switch(
                 app.handle().clone(),
                 Arc::clone(&state.mouse),
+                Arc::clone(&state.keyboard),
                 Arc::clone(&state.settings),
                 Arc::clone(&state.games),
             );

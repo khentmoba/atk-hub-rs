@@ -896,6 +896,13 @@ pub struct GameRule {
     pub exe: String,
     /// Onboard mouse profile index.
     pub profile: u8,
+    /// Keyboard profile index, when the keyboard should switch too.
+    #[serde(
+        default,
+        rename = "keyboardProfile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub keyboard_profile: Option<u8>,
 }
 
 /// Picks the rule for a foreground executable.

@@ -504,7 +504,7 @@ function kbKeyGroups() {
     ["Modifiers", Object.entries(MOD_KEYS).map(([c, n]) => [Number(c), n])],
     ["Media & system", Object.entries(MEDIA).map(([c, n]) => [Number(c), n])],
     ...LAYER_KINDS.map((kind, k) => [`${kind} layer`, Array.from({ length: state.kb?.model.layers ?? 4 }, (_, n) => [b.layer[k] + n, `${kind}(${n})`])]),
-    ["Macros", Array.from({ length: 16 }, (_, n) => [b.macro + n, `M${n}`])],
+    ["Macros", Array.from({ length: 8 }, (_, n) => [b.macro + n, `M${n}`])],
     ["Mouse", MOUSE_KEYS.map((name, n) => [b.mouse + n, name])],
     ["Lighting", RGB_KEYS.map((name, n) => [b.rgb + n, name])],
     ["Keyboard functions", Object.entries(YOGO).map(([c, n]) => [Number(c), n])],
@@ -606,7 +606,73 @@ function kbDeviceCards() {
         <button class="button" type="button" data-kb-magnet-read>Read Current Values</button>
       </div>
       <div class="output" id="kb-output">Actuation range ${actMin}–${actMax} mm · rapid trigger ${rtMin}–${rtMax} mm.</div>
+    </article>
+    ${kbMacroCard()}`;
+}
+
+/* ------------------------------------------------ keyboard onboard macros -- */
+
+const KB_MACRO_MODES = [[1, "Run N times, stop on release"], [2, "Run N times, keep going"], [3, "Run N times then stop"], [4, "Finish the round on release"], [5, "Loop until pressed again"], [6, "Loop with no stop condition"]];
+const KB_MOD_CODES = { 16: 225, 17: 224, 18: 226, 91: 227, 92: 231, 160: 225, 161: 229, 162: 224, 163: 228, 164: 226, 165: 230 };
+const KB_NAMED_MOD = { Shift: 225, Control: 224, Ctrl: 224, Alt: 226, Meta: 227, Win: 227 };
+const KB_MOUSE_CODES = [[209, "Left click"], [210, "Right click"], [211, "Middle click"], [212, "Back"], [213, "Forward"]];
+
+function kbStepsToActions(steps) {
+  const actions = [];
+  for (const step of steps ?? []) {
+    const code = step.vk !== undefined ? (KB_MOD_CODES[step.vk] ?? usageForVk(step.vk)) : (KB_NAMED_MOD[step.key] ?? usageForName(step.key));
+    if (!code) throw new Error(`Key ${step.key} cannot be stored on the keyboard`);
+    const delayMs = Math.min(65535, Math.max(0, Number(step.delay_ms) || 0));
+    if (step.action) actions.push({ down: step.action === "down", code, delayMs });
+    else actions.push({ down: true, code, delayMs: 20 }, { down: false, code, delayMs });
+  }
+  return actions;
+}
+
+function kbActionName(code) {
+  return KB_MOUSE_CODES.find(([c]) => c === code)?.[1] ?? HID[code]?.[0] ?? MOD_KEYS[code] ?? `#${code}`;
+}
+
+function kbMacroCard() {
+  const slots = state.kbMacros;
+  const slot = state.kbMacroSlot ?? 0;
+  const current = slots?.[slot];
+  const recorded = (state.macros ?? []).map((m, i) => [i, m.name]);
+  const summary = current?.actions?.length
+    ? current.actions.map((a) => `${a.down ? "↓" : "↑"}${kbActionName(a.code)}${a.delayMs ? ` ${a.delayMs}ms` : ""}`).join("  ")
+    : "Empty";
+  return `
+    <article class="card">
+      <div class="card-title"><h2>Onboard macros</h2><span>${slots ? "stored on the keyboard" : "not read yet"}</span></div>
+      ${select("Macro slot", "kbm-slot", Array.from({ length: 8 }, (_, i) => [i, `M${i}${slots?.[i]?.actions?.length ? " ●" : ""}`]), slot)}
+      ${recorded.length ? select("Recorded macro", "kbm-source", recorded, 0) : `<div class="notice">Record a macro on the Macros page to store it here.</div>`}
+      ${select("Playback", "kbm-mode", KB_MACRO_MODES, current?.mode ?? 1)}
+      ${field("Times", "kbm-count", String(current?.count ?? 1), "number")}
+      <div class="output" id="kbm-output">${escapeHtml(slots ? `M${slot}: ${summary}` : "Read the keyboard's macros first.")}</div>
+      <div class="actions">
+        <button class="button" type="button" data-kbm-read>Read Macros</button>
+        <button class="button primary" type="button" data-kbm-write ${recorded.length && slots ? "" : "disabled"}>Store in Slot</button>
+        <button class="button" type="button" data-kbm-clear ${slots ? "" : "disabled"}>Clear Slot</button>
+      </div>
+      <div class="notice" style="margin-top:10px">Assign a slot to a key with the Macros group (M0–M7) in the key remap list.</div>
     </article>`;
+}
+
+async function kbMacroWrite(clear) {
+  const slots = structuredClone(state.kbMacros ?? []);
+  while (slots.length < 8) slots.push({ actions: [], mode: 1, count: 1 });
+  const slot = num("kbm-slot", 0);
+  if (clear) {
+    slots[slot] = { actions: [], mode: 1, count: 1 };
+  } else {
+    const macro = state.macros?.[num("kbm-source", 0)];
+    if (!macro) throw new Error("Record a macro on the Macros page first");
+    slots[slot] = { actions: kbStepsToActions(macro.steps), mode: num("kbm-mode", 1), count: Math.max(1, Math.min(255, num("kbm-count", 1))) };
+  }
+  await call("kb_set_macros", { macros: slots }, clear ? `M${slot} cleared` : `Macro stored in M${slot}`);
+  state.kbMacros = slots;
+  state.kbMacroSlot = slot;
+  renderPage();
 }
 
 async function readKeyboard() {
@@ -728,6 +794,16 @@ export async function kbHandleClick(t) {
     return true;
   }
   if ("kbMagnet" in d) { await guarded(t, kbMagnet); return true; }
+  if ("kbmRead" in d) {
+    await guarded(t, async () => {
+      if (!state.macros?.length) state.macros = (await invoke("macros_load").catch(() => [])) ?? [];
+      state.kbMacros = await call("kb_macros", {}, "Keyboard macros read");
+      renderPage();
+    });
+    return true;
+  }
+  if ("kbmWrite" in d) { await guarded(t, () => kbMacroWrite(false)); return true; }
+  if ("kbmClear" in d) { await guarded(t, () => kbMacroWrite(true)); return true; }
   if ("kbMagnetRead" in d) { await guarded(t, kbMagnetRead); return true; }
   return false;
 }
@@ -763,25 +839,26 @@ export function gamesPage() {
   const rows = rules.length === 0
     ? `<div class="notice">No games configured.</div>`
     : rules.map((rule, i) => `
-      <div class="list-item"><span><strong>${escapeHtml(rule.exe)}</strong> → Profile ${rule.profile + 1}</span>
+      <div class="list-item"><span><strong>${escapeHtml(rule.exe)}</strong> → Mouse profile ${rule.profile + 1}${rule.keyboardProfile !== undefined && rule.keyboardProfile !== null ? ` · Keyboard profile ${rule.keyboardProfile + 1}` : ""}</span>
       <button class="button sm" type="button" data-game-delete="${i}">Remove</button></div>`).join("");
   return `
     ${pageHeading(state.pages.find((page) => page.id === "games"))}
     <div class="grid two">
       <article class="card">
         <div class="card-title"><h2>Auto switch</h2><span>foreground app</span></div>
-        ${toggle("Switch mouse profile when a game is focused", "game-enabled", state.hubSettings?.gameSwitchEnabled)}
+        ${toggle("Switch mouse and keyboard profiles when a game is focused", "game-enabled", state.hubSettings?.gameSwitchEnabled)}
         <div class="list" id="game-rules" style="margin-top:12px">${rows}</div>
       </article>
       <article class="card">
         <div class="card-title"><h2>Add game</h2><span>executable</span></div>
         ${field("Executable", "game-exe", "")}
         ${select("Mouse profile", "game-profile", [[0, "Profile 1"], [1, "Profile 2"], [2, "Profile 3"], [3, "Profile 4"]], 1)}
+        ${select("Keyboard profile", "game-kb-profile", [["", "Don't change"], [0, "Profile 1"], [1, "Profile 2"], [2, "Profile 3"], [3, "Profile 4"]], "")}
         <div class="actions">
           <button class="button" type="button" data-game-capture>Pick Focused App (3 s)</button>
           <button class="button primary" type="button" data-game-add>Add Game</button>
         </div>
-        <div class="notice" style="margin-top:14px">Leaving a configured game switches the mouse back to Profile 1.</div>
+        <div class="notice" style="margin-top:14px">Leaving a configured game switches the mouse (and keyboard, when set) back to Profile 1.</div>
       </article>
     </div>`;
 }
@@ -1259,7 +1336,7 @@ export function wireLiveEvents() {
     if ("gameAdd" in d) {
       const exe = $("game-exe").value.trim();
       if (!exe) return setStatus("Enter an executable name, e.g. game.exe");
-      return saveRules([...(state.gameRules ?? []), { exe, profile: num("game-profile", 1) }]);
+      return saveRules([...(state.gameRules ?? []), { exe, profile: num("game-profile", 1), ...($("game-kb-profile").value === "" ? {} : { keyboardProfile: num("game-kb-profile", 0) }) }]);
     }
     if (d.gameDelete !== undefined) {
       return saveRules((state.gameRules ?? []).filter((_, i) => i !== Number(d.gameDelete)));
@@ -1327,6 +1404,7 @@ export function wireLiveEvents() {
       state.kbLayer = Number(event.target.value);
       invoke("kb_keymap", { layer: state.kbLayer }).then((map) => { state.kbMap = map; renderKeyboard(); }).catch((error) => setStatus(errorText(error)));
     }
+    if (event.target.id === "kbm-slot") { state.kbMacroSlot = Number(event.target.value); renderPage(); }
     if (event.target.id === "ob-kind") {
       state.obKind = event.target.value;
       document.querySelectorAll("[data-ob]").forEach((el) => { el.hidden = el.dataset.ob !== state.obKind; });

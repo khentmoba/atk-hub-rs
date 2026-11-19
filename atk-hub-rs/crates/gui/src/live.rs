@@ -71,20 +71,24 @@ async fn with_keyboard<R: Send + 'static>(
     action: impl FnOnce(&mut Keyboard<HidTransport>) -> Result<R, HidError> + Send + 'static,
 ) -> Result<R, String> {
     let keyboard = Arc::clone(&state.keyboard);
-    blocking(move || {
-        let mut guard = keyboard.lock().map_err(lock_err)?;
-        if guard.is_none() {
-            let (driver, _) = Keyboard::open_first().map_err(|error| error.to_string())?;
-            *guard = Some(driver);
-        }
-        let driver = guard.as_mut().ok_or("keyboard unavailable")?;
-        let result = action(driver);
-        if matches!(result, Err(HidError::Api(_) | HidError::Timeout(_))) {
-            *guard = None;
-        }
-        result.map_err(|error| error.to_string())
-    })
-    .await
+    blocking(move || run_keyboard(&keyboard, action)).await
+}
+
+fn run_keyboard<R>(
+    keyboard: &SharedKeyboard,
+    action: impl FnOnce(&mut Keyboard<HidTransport>) -> Result<R, HidError>,
+) -> Result<R, String> {
+    let mut guard = keyboard.lock().map_err(lock_err)?;
+    if guard.is_none() {
+        let (driver, _) = Keyboard::open_first().map_err(|error| error.to_string())?;
+        *guard = Some(driver);
+    }
+    let driver = guard.as_mut().ok_or("keyboard unavailable")?;
+    let result = action(driver);
+    if matches!(result, Err(HidError::Api(_) | HidError::Timeout(_))) {
+        *guard = None;
+    }
+    result.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -116,6 +120,19 @@ pub async fn kb_set_key(
 #[tauri::command]
 pub async fn kb_reset_keymap(state: State<'_, HubState>) -> Result<(), String> {
     with_keyboard(&state, Keyboard::reset_keymap).await
+}
+
+#[tauri::command]
+pub async fn kb_macros(state: State<'_, HubState>) -> Result<Vec<keyboard::KeyboardMacro>, String> {
+    with_keyboard(&state, Keyboard::macros).await
+}
+
+#[tauri::command]
+pub async fn kb_set_macros(
+    state: State<'_, HubState>,
+    macros: Vec<keyboard::KeyboardMacro>,
+) -> Result<(), String> {
+    with_keyboard(&state, move |driver| driver.set_macros(&macros)).await
 }
 
 /// Partial keyboard settings; absent fields are untouched.
@@ -658,11 +675,13 @@ pub fn foreground_process() -> Option<String> {
 pub fn spawn_game_switch(
     app: AppHandle,
     mouse: SharedMouse,
+    keyboard: SharedKeyboard,
     settings: Arc<Mutex<HubSettings>>,
     rules: Arc<Mutex<Vec<GameRule>>>,
 ) {
     std::thread::spawn(move || {
         let mut active: Option<String> = None;
+        let mut active_kb: Option<u8> = None;
         loop {
             std::thread::sleep(Duration::from_millis(1500));
             let enabled = settings
@@ -679,20 +698,30 @@ pub fn spawn_game_switch(
             let exe = String::new();
             let target = rules.lock().ok().and_then(|guard| {
                 atk_features::match_game_rule(&guard, &exe)
-                    .map(|rule| (rule.exe.clone(), rule.profile))
+                    .map(|rule| (rule.exe.clone(), rule.profile, rule.keyboard_profile))
             });
             let next = match (&target, &active) {
-                (Some((name, profile)), current) if current.as_deref() != Some(name.as_str()) => {
-                    Some((Some(name.clone()), *profile))
+                (Some((name, profile, kb)), current)
+                    if current.as_deref() != Some(name.as_str()) =>
+                {
+                    Some((Some(name.clone()), *profile, *kb))
                 }
-                (None, Some(_)) => Some((None, 0)),
+                (None, Some(_)) => Some((None, 0, active_kb.map(|_| 0))),
                 _ => None,
             };
-            if let Some((name, profile)) = next
-                && run_mouse(&mouse, |driver| driver.set_profile(profile)).is_ok()
-            {
-                let _ = app.emit("game-switch", json!({ "exe": name, "profile": profile }));
-                active = name;
+            if let Some((name, profile, kb)) = next {
+                let mouse_ok = run_mouse(&mouse, |driver| driver.set_profile(profile)).is_ok();
+                let kb_ok = kb.is_some_and(|kb_profile| {
+                    run_keyboard(&keyboard, |driver| driver.set_profile(kb_profile)).is_ok()
+                });
+                if mouse_ok || kb_ok {
+                    let _ = app.emit(
+                        "game-switch",
+                        json!({ "exe": name, "profile": profile, "keyboardProfile": kb }),
+                    );
+                    active_kb = if name.is_some() { kb } else { None };
+                    active = name;
+                }
             }
         }
     });
