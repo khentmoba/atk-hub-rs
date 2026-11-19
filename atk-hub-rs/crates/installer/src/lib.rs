@@ -20,7 +20,7 @@ const SHORTCUT_NAME: &str = "ATK HUB (Rust).lnk";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Portable package used when setup.exe is run by itself.
 const RELEASE_ZIP_URL: &str =
-    "https://github.com/khentmoba/atk-hub-rs/releases/download/v0.1.2/atk-hub-rs-portable.zip";
+    "https://github.com/khentmoba/atk-hub-rs/releases/download/v0.1.3/atk-hub-rs-portable.zip";
 /// Log written beside the system temp directory.
 const LOG_NAME: &str = "atk-hub-rs-setup.log";
 /// Logo shown by the installer and shipped in the portable package.

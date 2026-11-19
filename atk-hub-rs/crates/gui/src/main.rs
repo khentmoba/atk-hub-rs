@@ -25,9 +25,13 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../../assets/atk-hub-logo.png"))
+            .expect("bundled ATK HUB logo is a valid PNG");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 860.0])
+            .with_icon(icon)
             .with_title("ATK HUB — Rust port"),
         ..Default::default()
     };
