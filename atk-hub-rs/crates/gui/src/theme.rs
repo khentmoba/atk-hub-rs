@@ -1,64 +1,61 @@
-//! Visual system for the ATK HUB-style interface.
+//! Visual system matching the light ATK GEAR interface of ATK HUB 3.2.x.
 //!
-//! The palette is taken from the installed ATK HUB 3.2.31 renderer bundle
-//! (`resources/main/app.asar` → `static/bootstrap-*.css`, theme `:root`):
-//! near-black `bg-100/bg-default` surfaces, translucent white borders, and
-//! the brand orange `--color-brand-primary-2: #ff6900` with its coral
-//! variant `rgba(244, 119, 91, *)`.
+//! Colours are taken from the running app's renderer: a light gray canvas,
+//! white cards, dark text, black pill buttons and the ATK GEAR orange accent.
 
 use egui::{
     Color32, CornerRadius, Frame, Id, Label, Layout, Margin, Rect, Response, RichText, Sense,
-    Stroke, TextStyle, Ui, Vec2, WidgetText,
+    Stroke, TextStyle, Ui, Vec2,
 };
 
-/// Colors sampled from the shipped ATK HUB renderer theme.
+/// Colours sampled from the shipped ATK HUB renderer theme.
 pub mod color {
     use super::Color32;
 
-    /// `--bg-100` — deepest application background.
-    pub const BG: Color32 = Color32::from_rgb(10, 10, 12);
-    /// `--bg-default` — panel / chrome background.
-    pub const CHROME: Color32 = Color32::from_rgb(15, 15, 17);
-    /// `--bg-300` — card surface.
-    pub const SURFACE: Color32 = Color32::from_rgb(19, 20, 25);
-    /// `--bg-500` — raised surface (buttons, inputs, hovered rows).
-    pub const RAISED: Color32 = Color32::from_rgb(26, 27, 32);
-    /// Subtle border colour (a translucent white over the dark surfaces).
-    pub const BORDER: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 20);
+    /// Application canvas behind the cards.
+    pub const BG: Color32 = Color32::from_rgb(245, 245, 247);
+    /// Header bar.
+    pub const CHROME: Color32 = Color32::from_rgb(255, 255, 255);
+    /// Card surface.
+    pub const SURFACE: Color32 = Color32::from_rgb(255, 255, 255);
+    /// Card footer, secondary surface and hover.
+    pub const RAISED: Color32 = Color32::from_rgb(232, 232, 236);
+    /// Subtle card border.
+    pub const BORDER: Color32 = Color32::from_rgb(224, 224, 228);
     /// Stronger border for selected controls.
-    pub const BORDER_STRONG: Color32 = Color32::from_rgba_premultiplied(42, 42, 42, 42);
-    /// `--greys-100` — primary text.
-    pub const TEXT: Color32 = Color32::from_rgb(238, 240, 241);
-    /// `--greys-400` — secondary text.
-    pub const MUTED: Color32 = Color32::from_rgb(154, 164, 173);
-    /// `--greys-600` — hints and captions.
-    pub const HINT: Color32 = Color32::from_rgb(100, 114, 124);
-    /// `--color-brand-primary-2` — brand orange.
+    pub const BORDER_STRONG: Color32 = Color32::from_rgb(198, 198, 204);
+    /// Primary text.
+    pub const TEXT: Color32 = Color32::from_rgb(26, 26, 28);
+    /// Secondary text.
+    pub const MUTED: Color32 = Color32::from_rgb(105, 105, 110);
+    /// Hints and captions.
+    pub const HINT: Color32 = Color32::from_rgb(150, 150, 156);
+    /// ATK GEAR orange.
     pub const ACCENT: Color32 = Color32::from_rgb(255, 105, 0);
     /// Lighter orange used for accent text.
-    pub const ACCENT_LIGHT: Color32 = Color32::from_rgb(255, 149, 75);
-    /// `--color-board-orange-65` — coral accent.
-    pub const CORAL: Color32 = Color32::from_rgb(244, 119, 91);
-    /// `--color-function-success`.
-    pub const SUCCESS: Color32 = Color32::from_rgb(47, 203, 100);
-    /// `--color-function-error`.
-    pub const DANGER: Color32 = Color32::from_rgb(255, 77, 79);
+    pub const ACCENT_LIGHT: Color32 = Color32::from_rgb(226, 92, 0);
+    /// Success green.
+    pub const SUCCESS: Color32 = Color32::from_rgb(47, 179, 90);
+    /// Error red.
+    pub const DANGER: Color32 = Color32::from_rgb(230, 62, 62);
+    /// Black pill buttons used by the hub.
+    pub const PILL: Color32 = Color32::from_rgb(26, 26, 28);
 }
 
-/// Apply the ATK HUB dark/orange theme to a context. Idempotent and cheap.
+/// Apply the ATK HUB light theme to a context. Idempotent and cheap.
 pub fn apply(ctx: &egui::Context) {
     let id = Id::new("atk-hub-theme-applied");
     if ctx.data(|data| data.get_temp::<bool>(id).unwrap_or(false)) {
         return;
     }
 
-    let mut visuals = egui::Visuals::dark();
-    visuals.dark_mode = true;
+    let mut visuals = egui::Visuals::light();
+    visuals.dark_mode = false;
     visuals.window_fill = color::CHROME;
     visuals.panel_fill = color::BG;
-    visuals.faint_bg_color = color::SURFACE;
-    visuals.extreme_bg_color = color::BG;
-    visuals.text_edit_bg_color = Some(color::BG);
+    visuals.faint_bg_color = color::RAISED;
+    visuals.extreme_bg_color = color::SURFACE;
+    visuals.text_edit_bg_color = Some(color::SURFACE);
     visuals.code_bg_color = color::RAISED;
     visuals.warn_fg_color = color::ACCENT_LIGHT;
     visuals.error_fg_color = color::DANGER;
@@ -66,7 +63,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.weak_text_color = Some(color::MUTED);
     visuals.button_frame = true;
     visuals.collapsing_header_frame = true;
-    visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 105, 0, 70);
+    visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 105, 0, 55);
     visuals.selection.stroke = Stroke::new(1.0, color::ACCENT);
     visuals.window_corner_radius = CornerRadius::same(12);
     visuals.window_stroke = Stroke::new(1.0, color::BORDER);
@@ -76,7 +73,7 @@ pub fn apply(ctx: &egui::Context) {
     w.noninteractive.weak_bg_fill = color::SURFACE;
     w.noninteractive.bg_stroke = Stroke::new(1.0, color::BORDER);
     w.noninteractive.fg_stroke.color = color::TEXT;
-    w.noninteractive.corner_radius = CornerRadius::same(10);
+    w.noninteractive.corner_radius = CornerRadius::same(8);
 
     w.inactive.bg_fill = color::RAISED;
     w.inactive.weak_bg_fill = color::RAISED;
@@ -84,22 +81,22 @@ pub fn apply(ctx: &egui::Context) {
     w.inactive.fg_stroke.color = color::TEXT;
     w.inactive.corner_radius = CornerRadius::same(8);
 
-    w.hovered.bg_fill = Color32::from_rgba_unmultiplied(255, 105, 0, 45);
+    w.hovered.bg_fill = Color32::from_rgb(222, 222, 227);
     w.hovered.weak_bg_fill = color::RAISED;
-    w.hovered.bg_stroke = Stroke::new(1.0, color::ACCENT);
-    w.hovered.fg_stroke.color = Color32::WHITE;
+    w.hovered.bg_stroke = Stroke::new(1.0, color::BORDER_STRONG);
+    w.hovered.fg_stroke.color = color::TEXT;
     w.hovered.corner_radius = CornerRadius::same(8);
 
-    w.active.bg_fill = Color32::from_rgba_unmultiplied(255, 105, 0, 80);
+    w.active.bg_fill = Color32::from_rgb(212, 212, 218);
     w.active.weak_bg_fill = color::RAISED;
-    w.active.bg_stroke = Stroke::new(1.0, color::ACCENT);
-    w.active.fg_stroke.color = Color32::WHITE;
+    w.active.bg_stroke = Stroke::new(1.0, color::BORDER_STRONG);
+    w.active.fg_stroke.color = color::TEXT;
     w.active.corner_radius = CornerRadius::same(8);
 
     w.open.bg_fill = color::RAISED;
     w.open.fg_stroke.color = color::TEXT;
 
-    ctx.set_theme(egui::Theme::Dark);
+    ctx.set_theme(egui::Theme::Light);
     ctx.all_styles_mut(|style| {
         style.visuals = visuals.clone();
         style.spacing.item_spacing = Vec2::new(8.0, 6.0);
@@ -131,26 +128,10 @@ pub fn apply(ctx: &egui::Context) {
     ctx.data_mut(|data| data.insert_temp(id, true));
 }
 
-/// Title-bar frame.
+/// Header bar frame.
 pub fn top_frame() -> Frame {
     Frame {
-        inner_margin: Margin::symmetric(20, 10),
-        fill: color::CHROME,
-        stroke: Stroke::new(1.0, color::BORDER),
-        corner_radius: CornerRadius::ZERO,
-        ..Default::default()
-    }
-}
-
-/// Left navigation frame.
-pub fn side_frame() -> Frame {
-    Frame {
-        inner_margin: Margin {
-            left: 14,
-            right: 14,
-            top: 18,
-            bottom: 16,
-        },
+        inner_margin: Margin::symmetric(24, 10),
         fill: color::CHROME,
         stroke: Stroke::new(1.0, color::BORDER),
         corner_radius: CornerRadius::ZERO,
@@ -162,10 +143,10 @@ pub fn side_frame() -> Frame {
 pub fn content_frame() -> Frame {
     Frame {
         inner_margin: Margin {
-            left: 26,
-            right: 26,
+            left: 28,
+            right: 28,
             top: 22,
-            bottom: 26,
+            bottom: 24,
         },
         fill: color::BG,
         corner_radius: CornerRadius::ZERO,
@@ -179,19 +160,7 @@ pub fn card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::In
         inner_margin: Margin::same(18),
         fill: color::SURFACE,
         stroke: Stroke::new(1.0, color::BORDER),
-        corner_radius: CornerRadius::same(12),
-        ..Default::default()
-    }
-    .show(ui, add_contents)
-}
-
-/// Compact card with tighter padding, used for stat tiles.
-pub fn tile<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    Frame {
-        inner_margin: Margin::same(14),
-        fill: color::RAISED,
-        stroke: Stroke::new(1.0, color::BORDER),
-        corner_radius: CornerRadius::same(10),
+        corner_radius: CornerRadius::same(14),
         ..Default::default()
     }
     .show(ui, add_contents)
@@ -200,7 +169,7 @@ pub fn tile<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::In
 /// Page title with an accent underline.
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.add(Label::new(
-        RichText::new(title).size(25.0).strong().color(color::TEXT),
+        RichText::new(title).size(24.0).strong().color(color::TEXT),
     ));
     ui.add(Label::new(
         RichText::new(subtitle).size(13.0).color(color::MUTED),
@@ -227,142 +196,61 @@ pub fn h2(ui: &mut Ui, text: &str) {
     ui.add_space(2.0);
 }
 
-/// Secondary, quieter heading.
-pub fn h3(ui: &mut Ui, text: impl Into<WidgetText>) {
-    ui.add(Label::new(text.into().color(color::ACCENT_LIGHT).strong()));
-}
-
-/// Muted caption / status text.
-pub fn muted(ui: &mut Ui, text: impl Into<WidgetText>) {
-    ui.add(Label::new(text.into().color(color::MUTED)).wrap());
-}
-
-/// Prominent orange call-to-action button.
+/// Black pill call-to-action button, as used by the hub.
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     ui.add(
         egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
-            .fill(color::ACCENT)
-            .stroke(Stroke::new(1.0, color::ACCENT_LIGHT))
-            .corner_radius(CornerRadius::same(8))
+            .fill(color::PILL)
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::same(18))
             .min_size(Vec2::new(108.0, 32.0)),
     )
 }
 
-/// Small uppercase group caption for the sidebar.
-pub fn nav_caption(ui: &mut Ui, text: &str) {
-    ui.add_space(6.0);
-    ui.add(Label::new(
-        RichText::new(text).size(10.0).strong().color(color::HINT),
+/// ATK GEAR wordmark with the orange lightning bolt, as in the app header.
+pub fn brand(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(126.0, 30.0), Sense::hover());
+    let painter = ui.painter();
+    let bolt = [
+        rect.min + Vec2::new(17.0, 2.0),
+        rect.min + Vec2::new(6.0, 16.0),
+        rect.min + Vec2::new(14.0, 16.0),
+        rect.min + Vec2::new(9.0, 28.0),
+        rect.min + Vec2::new(24.0, 11.0),
+        rect.min + Vec2::new(16.0, 11.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        bolt.to_vec(),
+        color::ACCENT,
+        Stroke::NONE,
     ));
-    ui.add_space(2.0);
+    painter.text(
+        rect.min + Vec2::new(30.0, 0.0),
+        egui::Align2::LEFT_TOP,
+        "ATK GEAR",
+        egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        color::TEXT,
+    );
 }
 
-/// Sidebar navigation entry. Returns whether it was clicked.
+/// Small navigation button in the header. Returns whether it was clicked.
 pub fn nav_button(ui: &mut Ui, badge: &str, label: &str, selected: bool) -> bool {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
-    let bg = if selected {
-        Color32::from_rgba_unmultiplied(255, 105, 0, 34)
-    } else if response.hovered() {
-        color::RAISED
-    } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect, CornerRadius::same(8), bg);
-    if selected {
-        ui.painter().rect_filled(
-            Rect::from_min_size(
-                rect.min + Vec2::new(0.0, 5.0),
-                Vec2::new(3.0, rect.height() - 10.0),
-            ),
-            CornerRadius::same(2),
-            color::ACCENT,
-        );
-    }
-    let badge_rect = Rect::from_min_size(rect.min + Vec2::new(12.0, 9.0), Vec2::new(18.0, 18.0));
-    let badge_fill = if selected {
-        color::ACCENT
-    } else {
-        color::RAISED
-    };
-    let badge_text = if selected {
-        Color32::WHITE
-    } else {
-        color::MUTED
-    };
-    ui.painter()
-        .rect_filled(badge_rect, CornerRadius::same(5), badge_fill);
-    ui.painter().text(
-        badge_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        badge,
-        egui::FontId::new(11.0, egui::FontFamily::Proportional),
-        badge_text,
+    let response = ui.add(
+        egui::Button::new(RichText::new(badge).size(12.0).strong())
+            .fill(if selected {
+                color::ACCENT
+            } else {
+                color::SURFACE
+            })
+            .corner_radius(CornerRadius::same(8))
+            .min_size(Vec2::new(26.0, 26.0)),
     );
-    let text_color = if selected {
-        Color32::WHITE
-    } else {
-        color::TEXT
-    };
-    ui.painter().text(
-        rect.left_center() + Vec2::new(42.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::new(13.5, egui::FontFamily::Proportional),
-        text_color,
-    );
-
-    response.clicked()
+    response.on_hover_text(label).clicked()
 }
 
-/// A small square color swatch.
-pub fn swatch(ui: &mut Ui, color: Color32, size: Vec2) {
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter()
-        .rect_filled(rect.shrink(2.0), CornerRadius::same(6), color);
-    ui.painter().rect_stroke(
-        rect.shrink(2.0),
-        CornerRadius::same(6),
-        Stroke::new(1.0, color::BORDER_STRONG),
-        egui::StrokeKind::Inside,
-    );
-}
-
-/// Draw the bundled ATK HUB mark at a fixed size. The PNG is decoded once and
-/// uploaded as a texture; egui has no default image loader for `include_image`.
-pub fn logo(ui: &mut Ui, size: Vec2) {
-    let ctx = ui.ctx();
-    let id = Id::new("atk-hub-logo-texture");
-    let handle = ctx.data(|data| data.get_temp::<egui::TextureHandle>(id));
-    let handle = handle.unwrap_or_else(|| {
-        let image = image::load_from_memory(include_bytes!("../../../../assets/atk-hub-logo.png"))
-            .expect("bundled ATK HUB logo is a valid PNG")
-            .to_rgba8();
-        let width = image.width() as usize;
-        let height = image.height() as usize;
-        let pixels: Vec<Color32> = image
-            .as_raw()
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-            .collect();
-        let handle = ctx.load_texture(
-            "atk-hub-logo",
-            egui::epaint::ColorImage::new([width, height], pixels),
-            egui::TextureOptions::LINEAR,
-        );
-        ctx.data_mut(|data| data.insert_temp(id, handle.clone()));
-        handle
-    });
-    let [width, height] = handle.size();
-    let sized = egui::load::SizedTexture::new(handle.id(), Vec2::new(width as f32, height as f32));
-    ui.add(egui::Image::from_texture(sized).fit_to_exact_size(size));
-}
-
-/// Draw one window-control button from vector primitives (font independent).
+/// Right-aligned window controls. Returns clicked actions as (minimize, maximize, close).
 fn control_button(ui: &mut Ui, kind: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::click());
     let bg = if response.hovered() {
         color::RAISED
     } else {
@@ -370,14 +258,7 @@ fn control_button(ui: &mut Ui, kind: &str) -> bool {
     };
     ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
     let center = rect.center();
-    let stroke = Stroke::new(
-        1.4,
-        if response.hovered() {
-            color::TEXT
-        } else {
-            color::MUTED
-        },
-    );
+    let stroke = Stroke::new(1.4, color::MUTED);
     match kind {
         "min" => {
             ui.painter().line_segment(
@@ -386,9 +267,8 @@ fn control_button(ui: &mut Ui, kind: &str) -> bool {
             );
         }
         "max" => {
-            let box_rect = Rect::from_center_size(center, Vec2::new(11.0, 11.0));
             ui.painter().rect_stroke(
-                box_rect,
+                Rect::from_center_size(center, Vec2::new(11.0, 11.0)),
                 CornerRadius::same(1),
                 stroke,
                 egui::StrokeKind::Inside,
@@ -409,13 +289,13 @@ fn control_button(ui: &mut Ui, kind: &str) -> bool {
     response.clicked()
 }
 
-/// Right-aligned window controls. Returns clicked actions as (minimize, maximize, close).
+/// Right-aligned window controls with the release pill.
 pub fn window_controls(ui: &mut Ui) -> (bool, bool, bool) {
     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
         let close = control_button(ui, "close");
         let maximize = control_button(ui, "max");
         let minimize = control_button(ui, "min");
-        ui.add_space(12.0);
+        ui.add_space(10.0);
         ui.add(Label::new(
             RichText::new("v3.2.31").size(11.0).color(color::HINT),
         ));
