@@ -1,5 +1,5 @@
 import {
-  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage,
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -495,6 +495,7 @@ function macrosPage() {
 function audioPage() {
   return `
     ${pageHeading(state.pages.find((page) => page.id === "audio"))}
+    <div id="headset" style="margin-bottom:16px">${headsetCards()}</div>
     <div class="grid two">
       <article class="card">
         <div class="card-title"><h2>THX connection</h2><span>gRPC over TLS</span></div>
@@ -985,7 +986,7 @@ function previewResponse(command, args) {
     { id: "keyboard", label: "Keyboard", subtitle: "Layout and key tester", group: "Device" },
     { id: "lighting", label: "Light Show", subtitle: "Keyboard backlight and effects", group: "Device" },
     { id: "macros", label: "Macros", subtitle: "Key sequences and bindings", group: "Device" },
-    { id: "audio", label: "Audio", subtitle: "THX spatial audio properties", group: "Device" },
+    { id: "audio", label: "Audio", subtitle: "Headset EQ, sidetone and THX spatial audio", group: "Device" },
     { id: "games", label: "Game Mode", subtitle: "Switch mouse profiles when a game is in focus", group: "Device" },
     { id: "pcscript", label: "PC Script", subtitle: "Lua scripts that automate mouse and keyboard input", group: "Device" },
     { id: "wallpapers", label: "Background Theme", subtitle: "Cloud wallpaper catalogue", group: "Library" },
@@ -1018,6 +1019,9 @@ function previewResponse(command, args) {
     music_status: false,
     pets_load: { enabled: true, visible: true, sound: true },
     pc_script_get_state: { platformOk: true, running: false, config: { enabled: false, resumeOnStartup: true, activeProfileId: "p1", profiles: [{ id: "p1", name: "Default", luaScript: "function on_tick()\n  if pc_rmb_pressed() and pc_lmb_pressed() then\n    input.move_rel(0, 3)\n  end\nend", enabled: false }], profileForegroundExes: {} }, profileTickErrors: {} },
+    headset_list: [{ path: "mock", productId: 4706, name: "ATK N9 V2 Ultimate", family: "bolutek" }],
+    headset_bolutek_state: { battery: 76, status: "discharging", eqMode: 0, surround: true, spatial: false, autoPowerOff: 2, sidetone: true, sidetoneVolume: 6, promptVolume: 8, dongleVersion: "1.0.3.2", headsetVersion: "1.0.5.1", rgb: true },
+    headset_bolutek_peq: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((freq) => ({ freq, gain: 0, q: 1, kind: 1, enabled: true })),
     kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },

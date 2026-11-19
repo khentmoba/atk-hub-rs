@@ -6,6 +6,7 @@
 
 pub mod compx;
 pub mod dpi;
+pub mod headset;
 mod kb_models;
 pub mod keyboard;
 mod models;
@@ -196,6 +197,15 @@ impl HidTransport {
             }
         }
         Err(last.map_or(HidError::NotFound, HidError::Api))
+    }
+
+    /// Writes a report without waiting for a reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error.
+    pub fn send(&mut self, report_id: u8, data: &[u8]) -> Result<(), HidError> {
+        self.write_padded(report_id, data)
     }
 
     /// Opens the first connected COMPX mouse.

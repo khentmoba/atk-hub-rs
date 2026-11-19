@@ -943,3 +943,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .kb-key[data-r] { cursor: pointer; }
 .kb-key.selected { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--accent-soft); }
 optgroup { font-weight: 600; }
+
+.table-wrap { overflow-x: auto; }
+table.peq { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.peq th, table.peq td { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line, rgba(255,255,255,0.08)); }
+table.peq input[type="number"], table.peq select { width: 100%; min-width: 64px; }

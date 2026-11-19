@@ -1256,6 +1256,152 @@ async function companionFile(input) {
   }
 }
 
+/* --------------------------------------------------------------- headset -- */
+
+const BOLUTEK_PEQ_TYPES = [[0, "Off"], [1, "Peaking"], [2, "High-pass"], [3, "Low-pass"], [4, "Low shelf"], [5, "High shelf"]];
+const KT_PEQ_TYPES = [[0, "Peak"], [1, "Low-pass"], [2, "High-pass"], [3, "Low shelf"], [4, "High shelf"]];
+const MIC_GAIN = [[0, "0 dB"], [1, "6 dB"], [2, "12 dB"], [3, "18 dB"], [4, "24 dB"], [5, "30 dB"]];
+
+function peqRows(prefix, points, types) {
+  return `<div class="table-wrap"><table class="peq"><thead><tr><th>#</th><th>On</th><th>Type</th><th>Freq (Hz)</th><th>Gain (dB)</th><th>Q</th></tr></thead><tbody>${(points ?? []).map((p, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><input type="checkbox" id="${prefix}-en-${i}" ${p.enabled ? "checked" : ""} /></td>
+      <td><select id="${prefix}-type-${i}">${types.map(([v, t]) => `<option value="${v}" ${v === p.kind ? "selected" : ""}>${t}</option>`).join("")}</select></td>
+      <td><input type="number" id="${prefix}-freq-${i}" min="20" max="20000" value="${p.freq}" /></td>
+      <td><input type="number" id="${prefix}-gain-${i}" min="-12" max="12" step="0.5" value="${p.gain}" /></td>
+      <td><input type="number" id="${prefix}-q-${i}" min="0.1" max="10" step="0.1" value="${Number(p.q).toFixed(2)}" /></td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+
+function readPeq(prefix, count) {
+  return Array.from({ length: count }, (_, i) => ({
+    enabled: checked(`${prefix}-en-${i}`), kind: num(`${prefix}-type-${i}`, 0),
+    freq: Math.round(Math.min(20000, Math.max(20, num(`${prefix}-freq-${i}`, 1000)))),
+    gain: Math.min(12, Math.max(-12, num(`${prefix}-gain-${i}`, 0))), q: Math.max(0.1, num(`${prefix}-q-${i}`, 1)),
+  }));
+}
+
+export function headsetCards() {
+  const list = state.headsets;
+  if (!list) return `<div class="notice">Looking for headsets…</div>`;
+  if (!list.length) {
+    return `<article class="card"><div class="card-title"><h2>Headset</h2><span>not connected</span></div>
+      <div class="notice">Plug in the 2.4G dongle of an ATK N9 V2 or Horizon headset.</div>
+      <div class="actions"><button class="button" type="button" data-hs-scan>Scan Again</button></div></article>`;
+  }
+  const device = list[state.headsetIndex ?? 0] ?? list[0];
+  const picker = list.length > 1 ? select("Headset", "hs-device", list.map((d, i) => [i, d.name]), state.headsetIndex ?? 0) : "";
+  const hs = state.headset;
+  const actions = `<div class="actions">
+      <button class="button" type="button" data-hs-read>Read</button>
+      <button class="button primary" type="button" data-hs-apply ${hs ? "" : "disabled"}>Apply</button>
+      <button class="button" type="button" data-hs-reset>Factory Reset</button>
+    </div><div class="output" id="hs-output"></div>`;
+  if (device.family === "ktmicro") {
+    return `<div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>${escapeHtml(device.name)}</h2><span>KTMicro</span></div>
+        ${picker}
+        ${hs ? `${range("Output volume", "hs-volume", 0, 100, 1, hs.volume)}
+        ${select("Microphone gain", "hs-mic", MIC_GAIN, hs.micGain)}
+        ${toggle("Headphone EQ", "hs-dac-eq", hs.dacEq)}
+        ${toggle("Microphone EQ", "hs-adc-eq", hs.adcEq)}` : `<div class="notice">Read the headset to load its settings.</div>`}
+        ${actions}
+      </article>
+      ${hs ? `<article class="card"><div class="card-title"><h2>Headphone EQ</h2><span>6 bands</span></div>${peqRows("hs-dac", hs.dacPoints, KT_PEQ_TYPES)}</article>
+      <article class="card"><div class="card-title"><h2>Microphone EQ</h2><span>6 bands</span></div>${peqRows("hs-adc", hs.adcPoints, KT_PEQ_TYPES)}</article>` : ""}
+    </div>`;
+  }
+  return `<div class="grid two">
+    <article class="card">
+      <div class="card-title"><h2>${escapeHtml(device.name)}</h2><span>${hs ? `${hs.battery}% · ${hs.status}` : "Bolutek"}</span></div>
+      ${picker}
+      ${hs ? `${select("EQ preset", "hs-eq", [[0, "Game 1"], [1, "Game 2"], [2, "Custom"]], hs.eqMode)}
+      ${toggle("Virtual 7.1 surround", "hs-surround", hs.surround)}
+      ${toggle("Spatial sound", "hs-spatial", hs.spatial)}
+      ${toggle("Sidetone", "hs-sidetone", hs.sidetone)}
+      ${range("Sidetone volume", "hs-sidetone-vol", 0, 15, 1, hs.sidetoneVolume)}
+      ${range("Voice prompt volume", "hs-prompt", 0, 15, 1, hs.promptVolume)}
+      ${select("Auto power off", "hs-apo", [[0, "Never"], [1, "10 minutes"], [2, "20 minutes"], [3, "30 minutes"], [4, "60 minutes"]], hs.autoPowerOff)}
+      ${select("Lighting", "hs-light", [[0, "Unchanged"], [1, "Marquee"], [2, "Breathing"], [3, "Static"], [4, "Blink"], [5, "Color cycle"]], 0)}
+      ${range("Lighting speed", "hs-light-speed", 10, 100, 1, 50, " ms")}
+      <div class="stat-row"><span class="stat-label">Dongle firmware</span><span class="stat-value">${escapeHtml(hs.dongleVersion)}</span></div>
+      <div class="stat-row"><span class="stat-label">Headset firmware</span><span class="stat-value">${escapeHtml(hs.headsetVersion)}</span></div>` : `<div class="notice">Read the headset to load its settings.</div>`}
+      ${actions}
+    </article>
+    <article class="card">
+      <div class="card-title"><h2>Custom EQ</h2><span>10-band parametric</span></div>
+      ${state.headsetPeq ? peqRows("hs-peq", state.headsetPeq, BOLUTEK_PEQ_TYPES) : `<div class="notice">Read the EQ to edit the Custom preset.</div>`}
+      <div class="actions">
+        <button class="button" type="button" data-hs-peq-read>Read EQ</button>
+        <button class="button primary" type="button" data-hs-peq-write ${state.headsetPeq ? "" : "disabled"}>Write EQ</button>
+      </div>
+    </article>
+  </div>`;
+}
+
+function renderHeadset() {
+  const box = $("headset");
+  if (box) box.innerHTML = headsetCards();
+}
+
+function headsetDevice() {
+  return state.headsets?.[state.headsetIndex ?? 0];
+}
+
+async function readHeadset() {
+  const device = headsetDevice();
+  if (!device) return;
+  state.headset = await call(device.family === "ktmicro" ? "headset_kt_state" : "headset_bolutek_state", { path: device.path }, `${device.name} read`);
+  renderHeadset();
+}
+
+export async function loadHeadset() {
+  try { state.headsets = await invoke("headset_list"); } catch (error) { state.headsets = []; setStatus(errorText(error)); }
+  renderHeadset();
+  if (headsetDevice() && !state.headset) await readHeadset().catch((error) => show("hs-output", errorText(error)));
+}
+
+async function headsetClick(t) {
+  const d = t.dataset;
+  const device = headsetDevice();
+  if ("hsScan" in d) { await guarded(t, loadHeadset); return true; }
+  if (!device) return false;
+  if ("hsRead" in d) { await guarded(t, readHeadset); return true; }
+  if ("hsApply" in d) {
+    await guarded(t, async () => {
+      if (device.family === "ktmicro") {
+        const next = { ...state.headset, volume: num("hs-volume", 50), micGain: num("hs-mic", 0), dacEq: checked("hs-dac-eq"), adcEq: checked("hs-adc-eq"), dacPoints: readPeq("hs-dac", state.headset.dacPoints.length), adcPoints: readPeq("hs-adc", state.headset.adcPoints.length) };
+        state.headset = await call("headset_kt_apply", { path: device.path, state: next }, "Headset settings saved");
+      } else {
+        const patch = { eqMode: num("hs-eq", 0), surround: checked("hs-surround"), spatial: checked("hs-spatial"), sidetone: checked("hs-sidetone"), sidetoneVolume: num("hs-sidetone-vol", 0), promptVolume: num("hs-prompt", 8), autoPowerOff: num("hs-apo", 0) };
+        if (num("hs-light", 0) > 0) { patch.lightMode = num("hs-light", 3); patch.lightSpeed = num("hs-light-speed", 50); }
+        state.headset = await call("headset_bolutek_apply", { path: device.path, patch }, "Headset settings applied");
+      }
+      renderHeadset();
+    });
+    return true;
+  }
+  if ("hsPeqRead" in d) { await guarded(t, async () => { state.headsetPeq = await call("headset_bolutek_peq", { path: device.path }, "EQ read"); renderHeadset(); }); return true; }
+  if ("hsPeqWrite" in d) {
+    await guarded(t, async () => {
+      const points = readPeq("hs-peq", state.headsetPeq.length);
+      await call("headset_bolutek_set_peq", { path: device.path, points }, "Custom EQ written");
+      state.headsetPeq = points;
+      if (state.headset) state.headset.eqMode = 2;
+      renderHeadset();
+    });
+    return true;
+  }
+  if ("hsReset" in d) {
+    if (t.dataset.confirm !== "1") { t.dataset.confirm = "1"; t.textContent = "Click again to reset"; return true; }
+    await guarded(t, async () => { await call("headset_factory_reset", { path: device.path, family: device.family }, "Headset reset to factory settings"); state.headset = null; await readHeadset(); });
+    return true;
+  }
+  return false;
+}
+
 export function petControls() {
   const p = state.petState ?? {};
   return `
@@ -1283,6 +1429,7 @@ export function wireLiveEvents() {
     if (!t) return;
     const d = t.dataset;
     if (await kbHandleClick(t)) return undefined;
+    if (await headsetClick(t)) return undefined;
     if ("mouseRead" in d) return guarded(t, readMouse);
     if ("mouseApply" in d) {
       return guarded(t, async () => {
@@ -1404,6 +1551,7 @@ export function wireLiveEvents() {
       state.kbLayer = Number(event.target.value);
       invoke("kb_keymap", { layer: state.kbLayer }).then((map) => { state.kbMap = map; renderKeyboard(); }).catch((error) => setStatus(errorText(error)));
     }
+    if (event.target.id === "hs-device") { state.headsetIndex = Number(event.target.value); state.headset = null; state.headsetPeq = null; loadHeadset(); }
     if (event.target.id === "kbm-slot") { state.kbMacroSlot = Number(event.target.value); renderPage(); }
     if (event.target.id === "ob-kind") {
       state.obKind = event.target.value;
@@ -1476,6 +1624,9 @@ export async function loadLivePage(pageId) {
     }
   } else if (pageId === "pcscript") {
     if (!state.pc) await loadPcScript();
+  } else if (pageId === "audio") {
+    if (!state.headsets) await loadHeadset();
+    else renderHeadset();
   } else if (pageId === "pets") {
     await loadCompanions();
   } else if (pageId === "games") {

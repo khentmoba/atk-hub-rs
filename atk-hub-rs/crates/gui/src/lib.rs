@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
+mod headset;
 mod live;
 mod overlay;
 mod pcscript;
@@ -119,7 +120,7 @@ const PAGES: &[PageInfo] = &[
     PageInfo {
         id: "audio",
         label: "Audio",
-        subtitle: "THX spatial audio properties",
+        subtitle: "Headset EQ, sidetone and THX spatial audio",
         group: "Device",
     },
     PageInfo {
@@ -985,6 +986,14 @@ pub fn run() {
             overlay::desktop_pet_upload,
             live::mouse_list,
             live::kb_list,
+            headset::headset_list,
+            headset::headset_bolutek_state,
+            headset::headset_bolutek_apply,
+            headset::headset_bolutek_peq,
+            headset::headset_bolutek_set_peq,
+            headset::headset_kt_state,
+            headset::headset_kt_apply,
+            headset::headset_factory_reset,
             live::kb_macros,
             live::kb_set_macros,
             live::kb_snapshot,
