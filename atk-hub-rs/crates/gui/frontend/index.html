@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>ATK HUB</title>
+    <link rel="icon" href="assets/atk-hub-logo.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <img src="assets/atk-hub-logo.png" alt="ATK HUB" />
+          <span class="brand-name">ATK <b>GEAR</b></span>
+          <button class="home-button" id="home-button" type="button">Device Center</button>
+        </div>
+
+        <div class="update-pill" id="update-pill" type="button" role="button" tabindex="0">
+          <span class="update-dot"></span>
+          <span class="update-title">ATK HUB</span>
+          <span class="update-version" id="app-version">v0.1.0</span>
+          <span class="update-action">New Version</span>
+        </div>
+
+        <nav class="quick-nav" id="quick-nav" aria-label="Quick navigation"></nav>
+
+        <div class="titlebar-actions">
+          <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Theme">◐</button>
+          <button class="icon-button" id="settings-button" type="button" aria-label="Settings" title="Settings">⚙</button>
+          <span class="window-divider"></span>
+          <button class="window-button" id="minimize-button" type="button" aria-label="Minimize">−</button>
+          <button class="window-button" id="maximize-button" type="button" aria-label="Maximize">□</button>
+          <button class="window-button close" id="close-button" type="button" aria-label="Close">×</button>
+        </div>
+      </header>
+
+      <aside class="rail" id="rail" aria-label="Feature navigation"></aside>
+
+      <main class="content" id="content">
+        <section class="page" id="page"></section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status-left">Ready</span>
+        <span id="status-right">Rust core · Tauri shell</span>
+      </footer>
+    </div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

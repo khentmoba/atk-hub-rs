@@ -20,7 +20,7 @@ shipped artifacts (REA MCP evidence + ASAR/main-bundle extraction).
 | `JSON.stringify({id,method,params: p ?? null}) + "\n"`, 256 KiB cap | `atk_agent::Request::encode`, `MAX_FRAME_BYTES` |
 | Response `{id, ok, result, error}` and `{event, …}` frames, newline buffering | `atk_agent::{Frame, FramedBuffer}` |
 | 64 pending requests, 10 s request timeout | `atk_agent::{MAX_PENDING, REQUEST_TIMEOUT}` |
-| Vue renderer / Electron windows | `atk_gui::HubApp`, eframe/egui native GUI |
+| Vue renderer / Electron windows | Tauri 2 shell, `crates/gui/frontend` HTML/CSS UI, and Rust commands in `atk_gui` |
 | Headless inspection of the port | `atk-hub-cli` (asar, config, ipc, endpoints, agent frames) |
 
 ## Test mapping
@@ -39,17 +39,16 @@ shipped artifacts (REA MCP evidence + ASAR/main-bundle extraction).
 | 169 channels, uniqueness, categories, exact allowlist | `registry::*` (4 tests) |
 | Frame byte layout, response/error/event decoding, split reads | `protocol::*` (5 tests) |
 | Pipe-name pattern and limits | `protocol::pipe_name_validation_matches_agent_discovery`, `protocol::protocol_limits_are_stable` |
-| GUI renders all six pages without a window | `ui::every_page_renders_offscreen_without_a_window`, `ui::fresh_app_starts_on_the_overview_page` |
+| Desktop routes and command bridge stay consistent | `atk_gui::tests::every_page_has_unique_id` and the workspace test suite |
 
 ## Deliberate differences
 
-1. **No Electron/Chromium runtime.** The GUI is native eframe/egui. There is no
-   DOM, no Node integration, and no runtime `ipcRenderer` calls. The IPC list is
-   a static reference, not a live message bus.
-2. **No live named-pipe transport in this milestone.** The agent crate ports the
-   wire format, limits and pipe naming; it does not open a pipe to the running
-   `atk-hub-service`. Device I/O, HID, audio, wallpaper and driver operations
-   remain future milestones.
+1. **No Electron/Node integration.** The UI is a bundled static frontend in a
+   Tauri WebView. Native operations go through explicit Tauri commands; the
+   recovered Electron IPC list remains a static reference, not a live bus.
+2. **Live named-pipe transport is available on Windows.** The Agent page can
+   connect to the running `atk-hub-service`, send allowlisted requests, list
+   HID interfaces and issue typed device control operations.
 3. **ASAR framing scope.** Only the 16-byte prefix used by this build is
    accepted; other ASAR header variants are out of scope and reported as errors.
 4. **Unpacked entries** have no archive payload, so their `size`/`offset` are
@@ -59,9 +58,9 @@ shipped artifacts (REA MCP evidence + ASAR/main-bundle extraction).
 6. **serde_json `preserve_order`** is enabled so JSON object iteration order
    matches the original JavaScript object order; a plain `BTreeMap` would sort
    keys and change output order.
-7. **Rust 1.93 / egui 0.35.** eframe 0.37 requires Rust 1.95, so the newest
-   compatible GUI toolkit release is used. Its API differs from newer egui
-   releases (root `Ui` panels and `App::ui`).
+7. **Rust 1.93 / Tauri 2.** The native shell uses Tauri 2 with WebView2 on
+   Windows. The frontend has no JavaScript framework or build step, so the
+   Rust workspace remains the single build and test entry point.
 
 ## Preserved quirks
 
@@ -84,7 +83,7 @@ cargo fmt --all                                                  # clean
 cargo build --workspace                                          # finished, 0 errors
 cargo test --workspace                                           # 60 passed (39 suites)
 cargo clippy --workspace --all-targets --all-features -- -D warnings  # no issues
-cargo run --quiet -p atk-gui --bin atk-hub-rs -- --self-check    # 16 pages rendered offscreen
+cargo run -p atk-gui --bin atk-hub-rs                             # opens the Tauri desktop shell
 ```
 
 Real-artifact smoke test with `atk-hub-cli`:
@@ -119,7 +118,7 @@ driver        -> version 1.1.2, file https://bpcdn.atkgear.com/hub-cloud/file/..
 - **Service CLI**: `atk-hub-cli service <action>` wraps install/uninstall/
   start/stop/status and the three auto-launch actions of the shipped
   `atk-hub-service.exe`; read-only actions were exercised successfully.
-- **Live Devices page**: the eframe GUI now has eight pages; Devices shows the
+- **Live Devices page**: the desktop shell exposes a Devices page; Devices shows the
   live HID interface list from `device.list`, and the Agent page can connect,
   disconnect and send live requests.
 - **Live wallpaper client**: `atk-wallpaper` downloads and parses
@@ -148,7 +147,8 @@ driver        -> version 1.1.2, file https://bpcdn.atkgear.com/hub-cloud/file/..
   RPC path could not be exercised here; generated messages, connection
   validation and pre-connect rejection are covered by four tests.
 
-- **Feature pages**: `atk-features` backs seven new eframe pages (16 total).
+- **Feature pages**: `atk-features` backs the lighting, macros, music, pets,
+  plugins, updater and drivers pages.
   Lighting lists real keymaps from `resources/main/app.asar` and sends reports
   through `device.write`; Macros persists macro JSON; Music probes and stops
   the loopback rhythm service on port 5577; Pets reads and writes
@@ -170,7 +170,7 @@ driver        -> version 1.1.2, file https://bpcdn.atkgear.com/hub-cloud/file/..
 ## Status
 
 All milestones and all previously documented gaps are closed. The application
-is a 16-page native eframe GUI over the ported core crates, with live agent,
+is a 13-page Tauri desktop shell over the ported core crates, with live agent,
 service, HID, wallpaper, THX, macro, plugin, updater and driver functionality.
 No system state is changed by tests; installation and key injection require an
 explicit GUI action. A license-free per-user `setup.exe` installer is provided

@@ -4,7 +4,7 @@
 
 This workspace contains the reverse-engineering report for the installed
 ATK HUB 3.2.31 application and a behavior-ported Rust implementation with a
-native eframe GUI.
+Tauri desktop shell and an HTML/CSS frontend.
 
 - [ATK_HUB_reverse_engineering_report.md](ATK_HUB_reverse_engineering_report.md)
   — findings from static analysis of the installed Electron app.

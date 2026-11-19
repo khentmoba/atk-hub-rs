@@ -2,8 +2,8 @@
 
 ![ATK HUB logo](../assets/atk-hub-logo.png)
 
-Rust port of ATK HUB 3.2.31. A native eframe/egui GUI over five behavior-ported
-core crates, with a headless CLI for verification. See [PORTING.md](PORTING.md)
+Rust port of ATK HUB 3.2.31. A Tauri 2 desktop shell with an HTML/CSS frontend
+over behavior-ported core crates, with a headless CLI for verification. See [PORTING.md](PORTING.md)
 for the API/test mapping, deliberate differences and preserved quirks.
 
 ## Layout
@@ -14,7 +14,7 @@ crates/config     electron-store compatible config.json access
 crates/endpoints  recovered remote URL templates
 crates/ipc        169 literal IPC channels + agent method allowlist
 crates/agent      named-pipe protocol (frame codec, limits, pipe naming)
-crates/gui        full eframe/egui GUI (binary: atk-hub-rs)
+crates/gui        Tauri shell and bundled web frontend (binary: atk-hub-rs)
 crates/wallpaper  live wallpaper catalogue client
 crates/audio      THX gRPC client generated from the shipped proto
 crates/features   logic for lighting, macros, music, pets, plugins, updater, drivers
@@ -28,13 +28,16 @@ crates/cli        headless CLI (binary: atk-hub-cli)
 cargo run -p atk-gui --bin atk-hub-rs
 ```
 
-It opens at 1280x860 with 16 pages: Overview, ASAR, Config, Endpoints, IPC,
-Agent, Devices, Wallpapers, Audio, Lighting, Macros, Music, Pets, Plugins,
-Updater and Drivers.
-To verify without opening a window:
+It opens at 1280x860 with 13 pages in three groups: Device Center, Devices,
+Light Show, Macros, Audio, Background Theme, Music Score Tool, Desktop Pets,
+Plugin Market, Update, Drivers, Settings and Diagnostics. The static frontend
+is loaded from `crates/gui/frontend`, and Rust exposes the core crates through
+Tauri commands.
+To verify without opening the app window:
 
 ```
-cargo run -p atk-gui --bin atk-hub-rs -- --self-check
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 ## Run the CLI
@@ -78,6 +81,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 The Devices page can connect/disconnect a HID device, write an output report,
 clear rules, set bindings and read typed agent state through the live pipe.
 
-Current result: 60 tests pass, clippy clean, GUI self-check renders all 16 pages.
+Current result: 60 tests pass, clippy clean, and the frontend renders cleanly
+at 1440, 1024, 768 and 390 pixels.
 Macro key injection, verified plugin/driver installation and the THX mock-server
 validation are covered; no test sends keystrokes or changes system state.

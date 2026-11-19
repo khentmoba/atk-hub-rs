@@ -226,7 +226,7 @@ pub fn set_pet_enabled(
 }
 
 /// Installed plugin bundle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plugin {
     /// Plugin id.
     pub id: String,
@@ -268,7 +268,7 @@ pub fn list_plugins(user_data: &Path) -> Result<Vec<Plugin>, FeatureError> {
 }
 
 /// Parsed `latest.yml` update metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateInfo {
     /// Available version.
     pub version: String,
@@ -350,7 +350,7 @@ pub fn version_newer(current: &str, available: &str) -> bool {
 }
 
 /// Downloadable driver or service metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriverInfo {
     /// Remote version.
     pub version: String,

@@ -1,6 +1,7 @@
 # Rust build output and packaged binaries
 target/
 **/target/
+**/gen/schemas/
 installer-package/
 *.zip
 *.exe
