@@ -31,6 +31,8 @@ New-Item -ItemType Directory -Force -Path $package | Out-Null
 foreach ($name in @('atk-hub-rs.exe', 'atk-hub-cli.exe', 'setup.exe')) {
     Copy-Item -LiteralPath (Join-Path $binDir $name) -Destination $package -Force
 }
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $root) 'assets\atk-hub-logo.png') -Destination $package -Force
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $root) 'assets\atk-hub.ico') -Destination $package -Force
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $package -Force
 Copy-Item -LiteralPath (Join-Path $root 'PORTING.md') -Destination $package -Force
 

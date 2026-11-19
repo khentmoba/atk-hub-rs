@@ -1,5 +1,7 @@
 # ATK HUB reverse engineering + Rust port
 
+![ATK HUB logo](assets/atk-hub-logo.png)
+
 This workspace contains the reverse-engineering report for the installed
 ATK HUB 3.2.31 application and a behavior-ported Rust implementation with a
 native eframe GUI.

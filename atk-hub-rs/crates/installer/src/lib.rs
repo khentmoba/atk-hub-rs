@@ -18,6 +18,13 @@ const CLI_EXE: &str = "atk-hub-cli.exe";
 const SHORTCUT_NAME: &str = "ATK HUB (Rust).lnk";
 /// Hide the helper PowerShell window entirely.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// Portable package used when setup.exe is run by itself.
+const RELEASE_ZIP_URL: &str =
+    "https://github.com/khentmoba/atk-hub-rs/releases/download/v0.1.2/atk-hub-rs-portable.zip";
+/// Log written beside the system temp directory.
+const LOG_NAME: &str = "atk-hub-rs-setup.log";
+/// Logo shown by the installer and shipped in the portable package.
+pub const LOGO_NAME: &str = "atk-hub-logo.png";
 
 /// Failures during install or uninstall.
 #[derive(Debug, Error)]
@@ -34,6 +41,12 @@ pub enum InstallError {
     /// Shortcut creation failed.
     #[error("shortcut creation failed: {detail}")]
     Shortcut {
+        /// Diagnostic detail.
+        detail: String,
+    },
+    /// The standalone installer could not download the portable package.
+    #[error("bootstrap failed: {detail}")]
+    Bootstrap {
         /// Diagnostic detail.
         detail: String,
     },
@@ -127,6 +140,98 @@ fn create_shortcut(target: &Path) -> Result<PathBuf, InstallError> {
         });
     }
     Ok(shortcut)
+}
+
+fn hidden_powershell(script: &str) -> Result<bool, InstallError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let status = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()?;
+        Ok(status.success())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = script;
+        Ok(false)
+    }
+}
+
+/// Appends a line to the installer log in the system temp directory.
+pub fn log_line(line: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(LOG_NAME);
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// Shows an error dialog when setup.exe is launched without a console.
+pub fn show_error(message: &str) {
+    let escaped = message.replace('\'', "''");
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('{escaped}', 'ATK HUB installer', 'OK', 'Error')"
+    );
+    let _ = hidden_powershell(&script);
+}
+
+/// Shows the ATK HUB logo while setup runs.
+pub fn show_logo(image: &Path) {
+    let path = image.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $image = [System.Drawing.Image]::FromFile('{path}'); $form = New-Object System.Windows.Forms.Form; $form.Text = 'ATK HUB'; $form.Width = 340; $form.Height = 380; $form.StartPosition = 'CenterScreen'; $form.FormBorderStyle = 'FixedDialog'; $picture = New-Object System.Windows.Forms.PictureBox; $picture.Image = $image; $picture.Dock = 'Fill'; $picture.SizeMode = 'Zoom'; $form.Controls.Add($picture); $form.Show(); Start-Sleep -Milliseconds 1200; $form.Close(); $image.Dispose()"
+    );
+    let _ = hidden_powershell(&script);
+}
+
+/// Returns a directory containing the portable package.
+///
+/// When `setup.exe` is run alone, it downloads and extracts the release ZIP
+/// instead of silently failing on missing sibling binaries.
+///
+/// # Errors
+///
+/// Returns an error if the download or extraction fails.
+pub fn bootstrap(source: &Path) -> Result<PathBuf, InstallError> {
+    if source.join(APP_EXE).is_file() && source.join(CLI_EXE).is_file() {
+        return Ok(source.to_path_buf());
+    }
+
+    log_line("package files missing beside setup.exe, downloading portable zip");
+    let temporary = std::env::temp_dir().join("atk-hub-rs-bootstrap");
+    let _ = fs::remove_dir_all(&temporary);
+    fs::create_dir_all(&temporary)?;
+    let archive = temporary.join("package.zip");
+    let download = format!(
+        "Invoke-WebRequest -Uri '{RELEASE_ZIP_URL}' -OutFile '{}' -UseBasicParsing",
+        quote(&archive)
+    );
+    if !hidden_powershell(&download)? {
+        return Err(InstallError::Bootstrap {
+            detail: "download failed".to_owned(),
+        });
+    }
+    let extract = format!(
+        "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+        quote(&archive),
+        quote(&temporary)
+    );
+    if !hidden_powershell(&extract)? {
+        return Err(InstallError::Bootstrap {
+            detail: "extraction failed".to_owned(),
+        });
+    }
+    log_line("portable zip extracted");
+    Ok(temporary)
 }
 
 /// Installs the portable package into `target`.

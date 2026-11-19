@@ -1,6 +1,6 @@
 //! Installer tests that never touch real user directories or shortcuts.
 
-use atk_installer::{InstallError, InstallOptions, install, uninstall};
+use atk_installer::{InstallError, InstallOptions, bootstrap, install, uninstall};
 use std::fs;
 
 struct Fixture {
@@ -33,6 +33,14 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+#[test]
+fn bootstrap_uses_an_existing_portable_package_without_network() {
+    let fixture = Fixture::new("bootstrap");
+    let options = fixture.options();
+    let source = bootstrap(&options.source).expect("existing package");
+    assert_eq!(source, options.source);
 }
 
 #[test]

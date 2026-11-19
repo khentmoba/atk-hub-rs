@@ -1,5 +1,7 @@
 # atk-hub-rs
 
+![ATK HUB logo](../assets/atk-hub-logo.png)
+
 Rust port of ATK HUB 3.2.31. A native eframe/egui GUI over five behavior-ported
 core crates, with a headless CLI for verification. See [PORTING.md](PORTING.md)
 for the API/test mapping, deliberate differences and preserved quirks.
