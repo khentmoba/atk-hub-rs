@@ -62,14 +62,18 @@ fn rejects_methods_outside_the_agent_allowlist() {
         .first(false)
         .single()
         .expect("create test pipe");
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let server_thread = thread::spawn(move || {
-        // No request will be written, so do not block waiting for one.
-        let _ = server.wait_ms(1_000);
+        // Keep the accepted server handle alive until the client finishes connecting and asserting.
+        let _connected = server.wait_ms(5_000);
+        let _ = done_rx.recv_timeout(Duration::from_secs(5));
     });
 
     let pipe = PipeName::parse(ALLOWLIST_NAME).expect("valid test pipe");
     let client = AgentClient::connect(&pipe).expect("connect to test pipe");
     assert!(client.request("shell.execute", Value::Null).is_err());
 
+    drop(client);
+    let _ = done_tx.send(());
     server_thread.join().expect("server thread");
 }
