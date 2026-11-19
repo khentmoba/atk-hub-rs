@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Lock key</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    body { display: grid; place-items: center; font: 600 15px/1.2 "Segoe UI", system-ui, sans-serif; }
+    .hint {
+      display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: 14px;
+      background: rgba(20, 22, 28, 0.86); color: #fff; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform 160ms ease;
+    }
+    .hint.show { opacity: 1; transform: none; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #6b7280; }
+    .on .dot { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+  </style>
+</head>
+<body>
+  <div class="hint" id="hint"><span class="dot"></span><span id="label">Caps Lock</span></div>
+  <script>
+    const tauri = window.__TAURI__;
+    let timer = null;
+    tauri?.event?.listen("lock-keys", ({ payload }) => {
+      const hint = document.getElementById("hint");
+      document.getElementById("label").textContent = `${payload.key} ${payload.on ? "On" : "Off"}`;
+      hint.classList.toggle("on", Boolean(payload.on));
+      hint.classList.add("show");
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        hint.classList.remove("show");
+        setTimeout(() => tauri.core.invoke("lock_hint_hide"), 200);
+      }, 1400);
+    });
+  </script>
+</body>
+</html>

@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Default permissions for the ATK HUB main window",
   "windows": [
-    "main"
+    "main",
+    "lockhint"
   ],
   "permissions": [
     "core:default"

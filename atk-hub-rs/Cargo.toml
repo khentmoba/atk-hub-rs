@@ -13,6 +13,7 @@ members = [
     "crates/features",
     "crates/input",
     "crates/installer",
+    "crates/hid",
 ]
 
 [workspace.package]
@@ -35,6 +36,7 @@ atk-wallpaper = { path = "crates/wallpaper" }
 atk-audio = { path = "crates/audio" }
 atk-features = { path = "crates/features" }
 atk-input = { path = "crates/input" }
+atk-hid = { path = "crates/hid" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

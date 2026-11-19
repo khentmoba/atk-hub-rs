@@ -1,3 +1,8 @@
+import {
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls,
+  wireLiveEvents, loadLivePage, loadHubSettings, translate,
+} from "./live.js";
+
 const Tauri = window.__TAURI__;
 const invoke = Tauri?.core?.invoke ?? (async (command, args) => {
   console.warn(`[preview] ${command}`, args);
@@ -23,15 +28,24 @@ const state = {
   musicRunning: null,
   updateInfo: null,
   driverInfo: null,
+  mouse: null,
+  mouseError: null,
+  systemMouse: null,
+  testedKeys: new Set(),
+  keymapDoc: null,
+  keymapName: null,
+  hubSettings: null,
+  gameRules: null,
+  updatePath: null,
 };
 
 const glyphs = {
-  overview: "⌂", devices: "DV", lighting: "LS", macros: "MX", audio: "TH",
+  overview: "⌂", devices: "DV", mouse: "MO", keyboard: "KB", games: "GM", lighting: "LS", macros: "MX", audio: "TH",
   wallpapers: "BG", music: "MS", pets: "PT", plugins: "PM", updater: "UP",
   drivers: "DR", settings: "ST", diagnostics: "DG",
 };
 
-const quick = ["wallpapers", "lighting", "macros", "audio", "plugins", "settings"];
+const quick = ["mouse", "keyboard", "lighting", "macros", "wallpapers", "settings"];
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -77,8 +91,8 @@ function setStatus(text) {
 function pageHeading(page) {
   return `
     <div class="page-heading">
-      <div class="eyebrow">${escapeHtml(page.group)}</div>
-      <h1>${escapeHtml(page.label)}</h1>
+      <div class="eyebrow">${escapeHtml(translate(page.group, page.group))}</div>
+      <h1>${escapeHtml(translate(page.id, page.label))}</h1>
       <p class="subtitle">${escapeHtml(page.subtitle)}</p>
     </div>`;
 }
@@ -209,7 +223,7 @@ function renderMacroList(macros) {
   }
   list.innerHTML = macros.map((macro, index) => `
     <div class="list-item">
-      <span><strong>${escapeHtml(macro.name)}</strong> · ${escapeHtml((macro.steps ?? []).map((step) => step.key).join(", "))}</span>
+      <span><strong>${escapeHtml(macro.name)}</strong> · ${escapeHtml((macro.steps ?? []).map((step) => `${step.action === "up" ? "↑" : step.action === "down" ? "↓" : ""}${step.key} ${step.delay_ms}ms`).join(", "))} · ${escapeHtml(macro.repeat_mode ?? "count")}${(macro.repeat_mode ?? "count") === "count" ? ` ×${macro.repeat_count ?? 1}` : ""}</span>
       <div class="actions" style="flex-wrap:nowrap">
         ${button("Run", "macros_run", { index }, { output: "macro-run-output", variant: "primary", size: "sm" })}
         ${button("Delete", "macros_delete", { index }, { output: "macro-run-output", size: "sm" })}
@@ -251,7 +265,7 @@ function renderWallpaperGrid() {
         <div class="wallpaper-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title || item.value)}</div>
         <div class="wallpaper-meta">
           <span>v${escapeHtml(item.version ?? "1")}</span>
-          ${dl ? `<a class="button sm" href="${escapeHtml(dl)}" target="_blank" rel="noreferrer">Download</a>` : ""}
+          ${dl ? `<button class="button sm primary" type="button" data-wallpaper-apply="${escapeHtml(dl)}">Apply</button>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -262,8 +276,11 @@ function renderPetSummary() {
   if (!box || !state.petState) return;
   box.innerHTML = `
     <div class="stat-row"><span class="stat-label">Enabled</span><span class="stat-value">${state.petState.enabled ? "Yes" : "No"}</span></div>
-    <div class="stat-row"><span class="stat-label">Pet visible</span><span class="stat-value">${state.petState.visible ? "Yes" : "No"}</span></div>
-    <div class="stat-row"><span class="stat-label">Sound</span><span class="stat-value">${state.petState.sound ? "On" : "Off"}</span></div>`;
+    <div class="stat-row"><span class="stat-label">Pet visible</span><span class="stat-value">${state.petState.petVisible ? "Yes" : "No"}</span></div>
+    <div class="stat-row"><span class="stat-label">Sound</span><span class="stat-value">${state.petState.sound ? "On" : "Off"}</span></div>
+    <div class="stat-row"><span class="stat-label">Skin</span><span class="stat-value">${escapeHtml(state.petState.skin || "default")}</span></div>`;
+  const controls = document.getElementById("pet-controls");
+  if (controls) controls.innerHTML = petControls();
 }
 
 function renderMusicStatus() {
@@ -297,19 +314,19 @@ function renderRail() {
   const rail = document.getElementById("rail");
   let lastGroup = "";
   rail.innerHTML = state.pages.map((page) => {
-    const group = page.group !== lastGroup ? `<div class="rail-group">${escapeHtml(page.group)}</div>` : "";
+    const group = page.group !== lastGroup ? `<div class="rail-group">${escapeHtml(translate(page.group, page.group))}</div>` : "";
     lastGroup = page.group;
     return group + `
       <button class="rail-item ${page.id === state.current ? "active" : ""}" data-page="${page.id}" type="button">
         <span class="rail-glyph">${glyphs[page.id] ?? page.label.slice(0, 2).toUpperCase()}</span>
-        <span>${escapeHtml(page.label)}</span>
+        <span>${escapeHtml(translate(page.id, page.label))}</span>
       </button>`;
   }).join("");
 
   document.getElementById("quick-nav").innerHTML = quick
     .map((id) => state.pages.find((page) => page.id === id))
     .filter(Boolean)
-    .map((page) => `<button class="quick-link ${page.id === state.current ? "active" : ""}" data-page="${page.id}" type="button">${escapeHtml(page.label)}</button>`)
+    .map((page) => `<button class="quick-link ${page.id === state.current ? "active" : ""}" data-page="${page.id}" type="button">${escapeHtml(translate(page.id, page.label))}</button>`)
     .join("");
 }
 
@@ -471,7 +488,8 @@ function macrosPage() {
         ${output("macro-run-output")}
         <div class="notice" style="margin-top:14px">Key injection only runs when you press Run. Macro names, delays and storage stay under your control.</div>
       </article>
-    </div>`;
+    </div>
+    <div id="macro-recorder" style="margin-top:18px">${macroEditor()}</div>`;
 }
 
 function audioPage() {
@@ -548,6 +566,7 @@ function petsPage() {
       <article class="card">
         <div class="card-title"><h2>Companion status</h2><span>wooden-fish</span></div>
         <div id="pet-summary">Loading companion settings…</div>
+        <div id="pet-controls" style="margin-top:14px">${petControls()}</div>
       </article>
     </div>`;
 }
@@ -582,7 +601,11 @@ function updaterPage() {
     <div class="grid two">
       <article class="card">
         <div class="card-title"><h2>Update feed</h2><span>latest.yml</span></div>
-        <div class="actions" style="margin-bottom:12px">${button("Check for Updates", "update_check", {}, { variant: "primary" })}</div>
+        <div class="actions" style="margin-bottom:12px">
+          ${button("Check for Updates", "update_check", {}, { variant: "primary" })}
+          <button class="button" type="button" data-update-download>Download Update</button>
+          <button class="button accent" type="button" data-update-install ${state.updatePath ? "" : "disabled"}>Run Installer</button>
+        </div>
         <div id="update-summary">Checking update feed…</div>
         <details class="raw-details">
           <summary>Raw update payload</summary>
@@ -593,7 +616,7 @@ function updaterPage() {
         <div class="card-title"><h2>Release channel</h2><span>latest</span></div>
         <div class="stat-row"><span class="stat-label">Current version</span><span class="stat-value" id="update-current">—</span></div>
         <div class="stat-row"><span class="stat-label">Host</span><span class="stat-value" id="update-host">—</span></div>
-        <div class="notice" style="margin-top:16px">Update metadata is parsed by the same Rust feature layer used by the CLI. No installer runs automatically.</div>
+        <div class="notice" style="margin-top:16px">Downloads are verified against the feed's SHA-512 before the installer can run. Nothing installs until you click Run Installer.</div>
       </article>
     </div>`;
 }
@@ -607,6 +630,7 @@ function driversPage() {
         <div class="actions" style="margin-bottom:12px">
           ${button("Fetch Metadata", "driver_metadata", {}, { variant: "primary" })}
           ${button("Prepare Archive", "driver_prepare")}
+          <button class="button accent" type="button" data-driver-install>Install Driver</button>
         </div>
         <div id="driver-summary" style="margin-bottom:12px">Fetching driver metadata…</div>
         ${field("Expected SHA-256", "sha256", "")}
@@ -636,6 +660,7 @@ function settingsPage() {
         </div>
         ${output()}
       </article>
+      ${hubSettingsCard()}
       <article class="card">
         <div class="card-title"><h2>Appearance</h2><span>interface</span></div>
         <div class="stat-row"><span class="stat-label">Theme</span><span class="stat-value" id="theme-name">${document.documentElement.dataset.theme === "dark" ? "Dark" : "Light"}</span></div>
@@ -685,6 +710,9 @@ function diagnosticsPage() {
 const renderers = {
   overview: overviewPage,
   devices: devicesPage,
+  mouse: mousePage,
+  keyboard: keyboardPage,
+  games: gamesPage,
   lighting: lightingPage,
   macros: macrosPage,
   audio: audioPage,
@@ -699,6 +727,7 @@ const renderers = {
 };
 
 async function loadPageData(pageId) {
+  loadLivePage(pageId);
   if (pageId === "devices") {
     try {
       const devices = await invoke("device_list");
@@ -907,7 +936,14 @@ function wireGlobalEvents() {
   };
   document.getElementById("minimize-button").addEventListener("click", windowCommand("window_minimize"));
   document.getElementById("maximize-button").addEventListener("click", windowCommand("window_toggle_maximize"));
-  document.getElementById("close-button").addEventListener("click", windowCommand("window_close"));
+  document.getElementById("close-button").addEventListener("click", () => {
+    const settings = state.hubSettings ?? {};
+    if (!settings.closeMinimizeTray && settings.exitDetectionPromptEnabled) {
+      showExitPrompt();
+    } else {
+      windowCommand("window_close")();
+    }
+  });
 
   const updatePill = document.getElementById("update-pill");
   const openUpdate = () => goTo("updater");
@@ -917,13 +953,39 @@ function wireGlobalEvents() {
   });
 }
 
+function showExitPrompt() {
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="modal card" role="dialog" aria-modal="true">
+      <h2>Exit ATK HUB?</h2>
+      <p class="subtitle">Device features such as game auto-switch and lock-key hints stop when the hub exits.</p>
+      <div class="actions">
+        <button class="button" type="button" data-modal="tray">Minimize to Tray</button>
+        <button class="button primary" type="button" data-modal="exit">Exit</button>
+        <button class="button" type="button" data-modal="cancel">Cancel</button>
+      </div>
+    </div>`;
+  modal.addEventListener("click", async (event) => {
+    const choice = event.target.closest("[data-modal]")?.dataset.modal;
+    if (!choice && event.target !== modal) return;
+    modal.remove();
+    if (choice === "exit") await invoke("app_exit");
+    if (choice === "tray") await invoke("window_minimize");
+  });
+  document.body.append(modal);
+}
+
 function previewResponse(command, args) {
   const previewPages = state.pages.length > 0 ? state.pages : [
     { id: "overview", label: "Device Center", subtitle: "Connected devices and system status", group: "Device" },
     { id: "devices", label: "Devices", subtitle: "Live HID interfaces from the ATK agent", group: "Device" },
+    { id: "mouse", label: "Mouse", subtitle: "DPI, polling rate, buttons and sensor settings", group: "Device" },
+    { id: "keyboard", label: "Keyboard", subtitle: "Layout and key tester", group: "Device" },
     { id: "lighting", label: "Light Show", subtitle: "Keyboard backlight and effects", group: "Device" },
     { id: "macros", label: "Macros", subtitle: "Key sequences and bindings", group: "Device" },
     { id: "audio", label: "Audio", subtitle: "THX spatial audio properties", group: "Device" },
+    { id: "games", label: "Game Mode", subtitle: "Switch mouse profiles when a game is in focus", group: "Device" },
     { id: "wallpapers", label: "Background Theme", subtitle: "Cloud wallpaper catalogue", group: "Library" },
     { id: "music", label: "Music Score Tool", subtitle: "Legacy music rhythm service", group: "Library" },
     { id: "pets", label: "Desktop Pets", subtitle: "Companion and wooden-fish settings", group: "Library" },
@@ -957,6 +1019,21 @@ function previewResponse(command, args) {
     update_check: { version: "3.2.31", url: "https://example.invalid/atk-hub.exe", sha512: "preview", size: 1234 },
     driver_metadata: { version: "1.0.0", file: "https://example.invalid/driver.zip" },
     macros_load: [],
+    hub_settings_get: { language: "en", openAtLogin: false, closeMinimizeTray: true, exitDetectionPromptEnabled: true, keyboardLockHintEnabled: false, globalHubHotkeyEnabled: false, globalHubHotkeyAccelerator: "Alt+Shift+H", gameSwitchEnabled: false },
+    mouse_list: [{ product: "VGN Dragonfly 4K Receiver", vendorId: 13652, productId: 62725 }],
+    system_mouse_get: { speed: 10, wheelLines: 3 },
+    game_rules_get: [{ exe: "cs2.exe", profile: 1 }],
+    keymap_load: { name: "ATK68", layouts: { keymap: [[{ index: [0, 0], defaultKey: { 0: [0, 41] } }, { index: [0, 1], defaultKey: { 0: [0, 30] } }, { index: [0, 2], w: 2, defaultKey: { 0: [0, 42] } }]] } },
+    mouse_snapshot: {
+      name: "VXE R1 PRO MAX", cid: 2, mid: 28, sensor: "Paw3395", maxDpi: 26000, version: "1.21", dongleVersion: "1.08",
+      online: true, battery: 80, charging: false, profile: 0,
+      rate: { reportRate: 2000, dpiTotal: 4, dpiLevel: 1, bhopMs: 0, buttonOperationMode: 0 },
+      stages: [400, 800, 1600, 3200, 6400, 12800, 20000, 26000].map((x, i) => ({ x, y: x, color: [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0], [0, 255, 255], [255, 0, 255], [255, 255, 255], [255, 128, 0]][i] })),
+      function: { debounceMs: 4, motionSync: true, sleepSeconds: 60, angleSnap: false, rippleControl: false },
+      performance: { sensorSleepEnabled: true, sensorSleepSeconds: 120, sensorMode: 1 },
+      liftOff: 1, farDistance: 0, angle: 0, angleEnabled: false, light: { mode: 1, brightness: 1, speed: 1 },
+      buttons: [[1, 1, 0], [1, 2, 0], [1, 4, 0], [1, 8, 0], [1, 16, 0], [2, 1, 0]],
+    },
   };
   if (command === "firmware_url") return `https://api-hub-cloud.atk.pro/firmware/${args.vendor_id}/${args.product_id}/${args.tag}`;
   if (command === "device_update_version_url") return `https://${args.host}/v1/device/update/${args.platform}/version`;
@@ -967,6 +1044,7 @@ function previewResponse(command, args) {
 async function bootstrap() {
   document.documentElement.dataset.theme = localStorage.getItem("atk-theme") ?? "light";
   wireGlobalEvents();
+  wireLiveEvents();
   try {
     state.info = await call("app_info", {}, "Core connected");
     state.pages = state.info.pages ?? [];
@@ -976,6 +1054,7 @@ async function bootstrap() {
     setStatus("Preview mode");
   }
   document.getElementById("app-version").textContent = `v${state.info.version}`;
+  await loadHubSettings();
   renderPage();
 
   try {
@@ -999,5 +1078,7 @@ async function bootstrap() {
     // Non-fatal if agent service is not running.
   }
 }
+
+export { invoke, state, call, setStatus, escapeHtml, pageHeading, button, field, output, pretty, renderPage, goTo };
 
 bootstrap();

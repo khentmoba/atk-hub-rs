@@ -1,13 +1,14 @@
 //! Tauri desktop shell for the ATK HUB Rust port.
 
 use atk_config::Config;
-use atk_features::{DriverInfo, Lighting, Macro, MacroStep};
+use atk_features::{DriverInfo, GameRule, HubSettings, Lighting, Macro, MacroStep, RepeatMode};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
+
+mod live;
 
 #[cfg(not(windows))]
 use atk_agent::PipeName;
@@ -28,6 +29,9 @@ struct HubState {
     client: Mutex<Option<()>>,
     macro_path: Mutex<String>,
     macros: Mutex<Vec<Macro>>,
+    mouse: live::SharedMouse,
+    settings: Arc<Mutex<HubSettings>>,
+    games: Arc<Mutex<Vec<GameRule>>>,
 }
 
 impl Default for HubState {
@@ -37,6 +41,9 @@ impl Default for HubState {
             client: Mutex::new(None),
             macro_path: Mutex::new(user_data.join("macros.json").to_string_lossy().into_owned()),
             macros: Mutex::new(Vec::new()),
+            mouse: Arc::new(Mutex::new(None)),
+            settings: Arc::new(Mutex::new(live::read_settings())),
+            games: Arc::new(Mutex::new(live::initial_game_rules())),
         }
     }
 }
@@ -82,6 +89,18 @@ const PAGES: &[PageInfo] = &[
         group: "Device",
     },
     PageInfo {
+        id: "mouse",
+        label: "Mouse",
+        subtitle: "DPI, polling rate, buttons and sensor settings",
+        group: "Device",
+    },
+    PageInfo {
+        id: "keyboard",
+        label: "Keyboard",
+        subtitle: "Layout and key tester",
+        group: "Device",
+    },
+    PageInfo {
         id: "lighting",
         label: "Light Show",
         subtitle: "Keyboard backlight and effects",
@@ -97,6 +116,12 @@ const PAGES: &[PageInfo] = &[
         id: "audio",
         label: "Audio",
         subtitle: "THX spatial audio properties",
+        group: "Device",
+    },
+    PageInfo {
+        id: "games",
+        label: "Game Mode",
+        subtitle: "Switch mouse profiles when a game is in focus",
         group: "Device",
     },
     PageInfo {
@@ -230,8 +255,22 @@ fn window_toggle_maximize(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn window_close(window: tauri::Window) -> Result<(), String> {
-    window.close().map_err(|error| error.to_string())
+fn window_close(window: tauri::Window, state: State<'_, HubState>) -> Result<(), String> {
+    let to_tray = state
+        .settings
+        .lock()
+        .map(|settings| settings.close_minimize_tray)
+        .unwrap_or(true);
+    if to_tray {
+        return window.hide().map_err(|error| error.to_string());
+    }
+    window.app_handle().exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -737,21 +776,42 @@ fn macros_save(state: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn macros_add(name: String, keys: String, state: State<'_, HubState>) -> Result<Value, String> {
-    let steps = keys
-        .split(',')
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(|key| MacroStep {
-            key: key.to_owned(),
-            delay_ms: 50,
-        })
-        .collect();
+fn macros_add(
+    name: String,
+    keys: Option<String>,
+    steps: Option<String>,
+    repeat_mode: Option<RepeatMode>,
+    repeat_count: Option<u32>,
+    index: Option<usize>,
+    state: State<'_, HubState>,
+) -> Result<Value, String> {
+    let steps: Vec<MacroStep> = match steps.filter(|text| !text.trim().is_empty()) {
+        Some(json) => serde_json::from_str(&json).map_err(|error| error.to_string())?,
+        None => keys
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(|key| MacroStep::press(key, 50))
+            .collect(),
+    };
+    if steps.is_empty() {
+        return Err("a macro needs at least one step".to_owned());
+    }
+    let entry = Macro {
+        name,
+        steps,
+        repeat_mode: repeat_mode.unwrap_or_default(),
+        repeat_count: repeat_count.unwrap_or(1).max(1),
+    };
     let mut macros = state
         .macros
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
-    macros.push(Macro { name, steps });
+    match index {
+        Some(index) if index < macros.len() => macros[index] = entry,
+        _ => macros.push(entry),
+    }
     serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
 }
 
@@ -778,22 +838,24 @@ fn macros_delete(index: usize, state: State<'_, HubState>) -> Result<Value, Stri
 }
 
 #[tauri::command]
-fn macros_run(index: usize, state: State<'_, HubState>) -> Result<String, String> {
-    let macros = state
+async fn macros_run(index: usize, state: State<'_, HubState>) -> Result<String, String> {
+    let macro_def = state
         .macros
         .lock()
-        .map_err(|_| "state lock poisoned".to_owned())?;
-    let macro_def = macros
+        .map_err(|_| "state lock poisoned".to_owned())?
         .get(index)
+        .cloned()
         .ok_or_else(|| "macro not found".to_owned())?;
-    for step in &macro_def.steps {
-        let sequence =
-            atk_input::KeySequence::from_str(&step.key).map_err(|error| error.to_string())?;
-        atk_input::KeyInjector
-            .press(&sequence)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(format!("Ran macro {}", macro_def.name))
+    let repeat = match macro_def.repeat_mode {
+        RepeatMode::Count => macro_def.repeat_count,
+        RepeatMode::WhileHeld | RepeatMode::Toggle => 1,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        live::run_steps(&macro_def.steps, repeat)?;
+        Ok(format!("Ran macro {}", macro_def.name))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -804,22 +866,6 @@ fn music_status() -> bool {
 #[tauri::command]
 fn music_stop() -> Result<(), String> {
     atk_features::stop_music_service().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn pets_load(path: String) -> Result<Value, String> {
-    let target = if path.trim().is_empty() {
-        user_data_dir().join("wooden-fish.json")
-    } else {
-        PathBuf::from(&path)
-    };
-    let config = atk_features::load_pet_settings(&target).map_err(|error| error.to_string())?;
-    Ok(json!({
-        "enabled": atk_features::pet_enabled(&config, "enabled"),
-        "visible": atk_features::pet_enabled(&config, "petVisible"),
-        "sound": atk_features::pet_enabled(&config, "sound"),
-        "path": target.to_string_lossy(),
-    }))
 }
 
 #[tauri::command]
@@ -907,17 +953,69 @@ pub fn run() {
             macros_run,
             music_status,
             music_stop,
-            pets_load,
+            live::pets_load,
+            live::pets_save,
+            live::mouse_list,
+            live::mouse_snapshot,
+            live::mouse_apply,
+            live::mouse_button,
+            live::mouse_profile,
+            live::mouse_pair,
+            live::mouse_pair_status,
+            live::mouse_reset,
+            live::keymap_load,
+            live::system_mouse_get,
+            live::system_mouse_set,
+            live::hub_settings_get,
+            live::hub_settings_set,
+            live::lock_hint_hide,
+            live::game_rules_get,
+            live::game_rules_set,
+            live::foreground_process,
+            live::wallpaper_apply,
+            live::update_download,
+            live::installer_launch,
+            live::driver_install,
+            live::macros_run_steps,
+            app_exit,
             plugins_list,
             plugins_install,
             update_check,
             driver_metadata,
             driver_prepare,
         ])
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        live::toggle_main(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 window.set_shadow(true)?;
+                if std::env::args().any(|arg| arg == "--hidden") {
+                    window.hide()?;
+                }
             }
+            live::build_tray(app)?;
+            live::build_lock_overlay(app)?;
+            let state = app.state::<HubState>();
+            let settings = state
+                .settings
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default();
+            live::apply_hotkey(app.handle(), &settings);
+            live::spawn_lock_hint(app.handle().clone(), Arc::clone(&state.settings));
+            live::spawn_game_switch(
+                app.handle().clone(),
+                Arc::clone(&state.mouse),
+                Arc::clone(&state.settings),
+                Arc::clone(&state.games),
+            );
             Ok(())
         })
         .run(tauri::generate_context!())
