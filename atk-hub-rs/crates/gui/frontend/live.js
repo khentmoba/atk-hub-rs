@@ -786,6 +786,185 @@ export function gamesPage() {
     </div>`;
 }
 
+/* ------------------------------------------------------------ pc script -- */
+
+const PC_SAMPLE = `-- Runs about every 16 ms while enabled.
+function on_tick()
+  if pc_rmb_pressed() and pc_lmb_pressed() then
+    input.move_rel(0, 3)
+  end
+end`;
+
+const PC_API = [
+  ["on_tick()", "Your function, called about every 16 ms"],
+  ["pc_lmb_pressed() / pc_rmb_pressed() / pc_mmb_pressed()", "Mouse buttons held"],
+  ["pc_xbutton1_pressed() / pc_xbutton2_pressed()", "Side buttons held"],
+  ["pc_key_pressed(VK.A)", "Any virtual key held"],
+  ["pc_digit_or_numpad_pressed(3)", "Top-row or numpad digit held"],
+  ["move_rel(dx, dy) / input.move_rel(dx, dy)", "Move the pointer relatively"],
+  ["move_abs(x, y)", "Move the pointer to screen coordinates"],
+  ["get_cursor_pos_native()", "Returns x, y"],
+  ["mouse_click(b) / mouse_down(b) / mouse_up(b)", "1 left, 2 right, 3 middle, 4/5 side"],
+  ["send_key_tap(VK.A) / send_key_down / send_key_up", "Virtual key presses"],
+  ["chord_tap(VK.A, VK.SHIFT, VK.MENU)", "Key combination"],
+  ["send_text(\"hello\") / send_unicode_utf16(32)", "Type text"],
+  ["input.log(...)", "Write to the console below"],
+];
+
+function pcActive() {
+  const config = state.pc?.config;
+  return config?.profiles?.find((p) => p.id === state.pcProfile) ?? config?.profiles?.[0];
+}
+
+export function pcScriptPage() {
+  const pc = state.pc;
+  const head = pageHeading(state.pages.find((page) => page.id === "pcscript"));
+  if (!pc) return `${head}<div class="notice">Loading PC scripts…</div>`;
+  const config = pc.config;
+  const active = pcActive();
+  const exes = (config.profileForegroundExes?.[active?.id] ?? []).join("\n");
+  const tickError = pc.profileTickErrors?.[active?.id];
+  const profiles = config.profiles.map((p) => `
+      <div class="list-item ${p.id === active?.id ? "selected" : ""}">
+        <button class="button sm ${p.id === active?.id ? "primary" : ""}" type="button" data-pc-pick="${escapeHtml(p.id)}">${escapeHtml(p.name)}</button>
+        <span>${p.enabled ? "Enabled" : "Off"}</span>
+      </div>`).join("");
+  return `
+    ${head}
+    ${pc.platformOk ? "" : `<div class="notice">PC scripts only run on Windows.</div>`}
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Script profiles</h2><span>${pc.running ? "Running" : "Stopped"}</span></div>
+        <div class="list">${profiles}</div>
+        ${toggle("Resume enabled scripts when the Hub starts", "pc-resume", config.resumeOnStartup)}
+        <div class="actions">
+          <button class="button" type="button" data-pc-add>New Profile</button>
+          <button class="button" type="button" data-pc-delete ${config.profiles.length > 1 ? "" : "disabled"}>Delete Profile</button>
+          <button class="button" type="button" data-pc-stop ${pc.running ? "" : "disabled"}>Stop All</button>
+        </div>
+        <details class="raw-details" style="margin-top:12px">
+          <summary>API reference</summary>
+          <div class="list">${PC_API.map(([sig, what]) => `<div class="list-item"><code>${escapeHtml(sig)}</code><span>${escapeHtml(what)}</span></div>`).join("")}</div>
+        </details>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>${escapeHtml(active?.name ?? "Script")}</h2><span>Lua</span></div>
+        ${field("Name", "pc-name", active?.name ?? "")}
+        ${toggle("Enable this script", "pc-enabled", active?.enabled)}
+        <div class="form-row"><label for="pc-script">Script</label><textarea id="pc-script" rows="14" spellcheck="false" style="font-family:Consolas,monospace">${escapeHtml(active?.luaScript || "")}</textarea></div>
+        <div class="form-row"><label for="pc-exes">Only run in these programs (one .exe per line, empty for everywhere)</label><textarea id="pc-exes" rows="3" spellcheck="false">${escapeHtml(exes)}</textarea></div>
+        <div class="form-row"><label for="pc-import">Import .lua file</label><input type="file" id="pc-import" accept=".lua,text/plain" /></div>
+        <div class="actions">
+          <button class="button primary" type="button" data-pc-save>Save &amp; Apply</button>
+          <button class="button" type="button" data-pc-validate>Check Syntax</button>
+          <button class="button" type="button" data-pc-sample>Insert Example</button>
+          <button class="button" type="button" data-pc-export>Export .lua</button>
+          <button class="button" type="button" data-pc-capture>Add Focused App (3 s)</button>
+        </div>
+        ${tickError ? `<div class="notice" style="white-space:pre-wrap">${escapeHtml(tickError)}</div>` : ""}
+        <div class="output" id="pc-output">${escapeHtml(state.pcMessage ?? "Save & Apply validates the script and starts it.")}</div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Console</h2><span>input.log output</span></div>
+        <div class="output" id="pc-console" style="max-height:260px;overflow:auto;white-space:pre-wrap">${escapeHtml((state.pcLogs ?? []).map((l) => `${new Date(l.ts).toLocaleTimeString()}  ${l.message}`).join("\n") || "No output yet.")}</div>
+        <div class="actions">
+          <button class="button" type="button" data-pc-logs>Refresh</button>
+          <button class="button" type="button" data-pc-clear>Clear</button>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Diagnostics</h2><span>input check</span></div>
+        <div class="output" id="pc-probe">Hold keys, then press Probe Keys.</div>
+        <div class="actions">
+          <button class="button" type="button" data-pc-probe>Probe Keys</button>
+          <button class="button" type="button" data-pc-move>Test Move (0, 10)</button>
+        </div>
+      </article>
+    </div>`;
+}
+
+function pcCollect() {
+  const config = structuredClone(state.pc.config);
+  const active = config.profiles.find((p) => p.id === pcActive()?.id);
+  if (active && $("pc-script")) {
+    active.name = $("pc-name").value.trim() || active.name;
+    active.enabled = checked("pc-enabled");
+    active.luaScript = $("pc-script").value;
+    const exes = $("pc-exes").value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    config.profileForegroundExes = { ...(config.profileForegroundExes ?? {}) };
+    if (exes.length) config.profileForegroundExes[active.id] = exes; else delete config.profileForegroundExes[active.id];
+  }
+  config.resumeOnStartup = checked("pc-resume");
+  config.activeProfileId = active?.id ?? null;
+  return config;
+}
+
+export async function loadPcScript() {
+  try {
+    state.pc = await invoke("pc_script_get_state");
+    state.pcProfile ??= state.pc.config.activeProfileId ?? state.pc.config.profiles[0]?.id;
+    state.pcLogs = (await invoke("pc_script_logs"))?.logs ?? [];
+  } catch (error) {
+    setStatus(errorText(error));
+  }
+  if (state.current === "pcscript") renderPage();
+}
+
+async function pcClick(t) {
+  const d = t.dataset;
+  if (d.pcPick !== undefined) { state.pc.config = pcCollect(); state.pcProfile = d.pcPick; state.pcMessage = null; renderPage(); return true; }
+  if ("pcAdd" in d) {
+    const config = pcCollect();
+    const id = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
+    config.profiles.push({ id, name: `Script ${config.profiles.length + 1}`, luaScript: "", enabled: false });
+    state.pc.config = config; state.pcProfile = id; renderPage(); return true;
+  }
+  if ("pcDelete" in d) {
+    if (t.dataset.confirm !== "1") { t.dataset.confirm = "1"; t.textContent = "Click again to delete"; return true; }
+    const config = pcCollect();
+    config.profiles = config.profiles.filter((p) => p.id !== pcActive()?.id);
+    state.pc.config = config; state.pcProfile = config.profiles[0]?.id; renderPage(); return true;
+  }
+  if ("pcSave" in d) {
+    await guarded(t, async () => {
+      const result = await invoke("pc_script_save_and_apply", { config: pcCollect() });
+      state.pcMessage = result.ok ? ((result.warnings ?? []).join("\n") || "Saved. Enabled scripts are running.") : `Failed: ${result.error}`;
+      setStatus(result.ok ? "PC scripts applied" : "PC scripts failed");
+      await loadPcScript();
+    });
+    return true;
+  }
+  if ("pcValidate" in d) {
+    const result = await invoke("pc_script_validate", { luaScript: $("pc-script").value });
+    show("pc-output", result.ok ? "No syntax errors." : result.error);
+    return true;
+  }
+  if ("pcSample" in d) { $("pc-script").value = PC_SAMPLE; return true; }
+  if ("pcExport" in d) {
+    await guarded(t, async () => { show("pc-output", `Saved to ${await invoke("pc_script_export", { name: $("pc-name").value, content: $("pc-script").value })}`); });
+    return true;
+  }
+  if ("pcCapture" in d) {
+    await guarded(t, async () => {
+      show("pc-output", "Switch to the program now…");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const exe = await invoke("foreground_process");
+      if (!exe) throw new Error("Could not read the focused program");
+      const name = exe.split(/[\\/]/).pop();
+      const box = $("pc-exes");
+      box.value = [...box.value.split(/\r?\n/).filter(Boolean), name].join("\n");
+      show("pc-output", `Added ${name}`);
+    });
+    return true;
+  }
+  if ("pcStop" in d) { await invoke("pc_script_stop"); setStatus("PC scripts stopped"); await loadPcScript(); return true; }
+  if ("pcLogs" in d) { await loadPcScript(); return true; }
+  if ("pcClear" in d) { await invoke("pc_script_clear_logs"); state.pcLogs = []; show("pc-console", "No output yet."); return true; }
+  if ("pcProbe" in d) { show("pc-probe", await invoke("pc_script_probe_keys")); return true; }
+  if ("pcMove" in d) { await invoke("pc_script_debug_move", { dx: 0, dy: 10 }); return true; }
+  return false;
+}
+
 async function saveRules(rules) {
   state.gameRules = await call("game_rules_set", { rules }, "Game rules saved");
   renderPage();
@@ -1120,6 +1299,7 @@ export function wireLiveEvents() {
     }
     if ("hubSettings" in d) return guarded(t, () => saveHubSettings());
     if (await companionClick(t)) return undefined;
+    if (await pcClick(t)) return undefined;
     if (d.wallpaperApply !== undefined) {
       return guarded(t, async () => {
         const result = await call("wallpaper_apply", { url: d.wallpaperApply, apply: true }, "Wallpaper downloaded");
@@ -1152,6 +1332,9 @@ export function wireLiveEvents() {
       document.querySelectorAll("[data-ob]").forEach((el) => { el.hidden = el.dataset.ob !== state.obKind; });
     }
     if (event.target.id === "fish-sound-file" || event.target.id === "dp-sprite-file") companionFile(event.target);
+    if (event.target.id === "pc-import" && event.target.files?.[0]) {
+      event.target.files[0].text().then((text) => { $("pc-script").value = text; show("pc-output", `Imported ${event.target.files[0].name}`); });
+    }
     if (event.target.id === "merit-period") { state.meritPeriod = event.target.value; renderCompanions(); }
     if (event.target.id === "game-enabled") saveHubSettings({ gameSwitchEnabled: event.target.checked });
     if (event.target.id === "dpi-total") {
@@ -1213,6 +1396,8 @@ export async function loadLivePage(pageId) {
       await readKeyboard();
       state.kbLoading = false;
     }
+  } else if (pageId === "pcscript") {
+    if (!state.pc) await loadPcScript();
   } else if (pageId === "pets") {
     await loadCompanions();
   } else if (pageId === "games") {

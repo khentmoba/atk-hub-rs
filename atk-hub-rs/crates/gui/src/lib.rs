@@ -10,6 +10,7 @@ use tauri::{Manager, State};
 
 mod live;
 mod overlay;
+mod pcscript;
 
 #[cfg(not(windows))]
 use atk_agent::PipeName;
@@ -125,6 +126,12 @@ const PAGES: &[PageInfo] = &[
         id: "games",
         label: "Game Mode",
         subtitle: "Switch mouse profiles when a game is in focus",
+        group: "Device",
+    },
+    PageInfo {
+        id: "pcscript",
+        label: "PC Script",
+        subtitle: "Lua scripts that automate mouse and keyboard input",
         group: "Device",
     },
     PageInfo {
@@ -959,6 +966,15 @@ pub fn run() {
             live::pets_load,
             live::pets_save,
             overlay::overlay_state,
+            pcscript::pc_script_get_state,
+            pcscript::pc_script_save_and_apply,
+            pcscript::pc_script_validate,
+            pcscript::pc_script_stop,
+            pcscript::pc_script_logs,
+            pcscript::pc_script_clear_logs,
+            pcscript::pc_script_probe_keys,
+            pcscript::pc_script_debug_move,
+            pcscript::pc_script_export,
             overlay::woodenfish_tap,
             overlay::woodenfish_set,
             overlay::woodenfish_sound_get,
@@ -1030,6 +1046,7 @@ pub fn run() {
             live::build_lock_overlay(app)?;
             overlay::build_overlays(app)?;
             overlay::spawn_input_watch(app.handle().clone());
+            std::thread::spawn(pcscript::resume_on_startup);
             let state = app.state::<HubState>();
             let settings = state
                 .settings

@@ -204,3 +204,106 @@ pub fn local_date() -> String {
     let now = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     format!("{:04}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay)
 }
+
+fn send_inputs(inputs: &[windows::Win32::UI::Input::KeyboardAndMouse::INPUT]) {
+    let size = i32::try_from(std::mem::size_of::<
+        windows::Win32::UI::Input::KeyboardAndMouse::INPUT,
+    >())
+    .unwrap_or(i32::MAX);
+    // SAFETY: `inputs` is a valid slice of fully initialized INPUT structs and
+    // `size` is the size of one INPUT, as SendInput requires.
+    unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SendInput(inputs, size) };
+}
+
+fn mouse_input(
+    dx: i32,
+    dy: i32,
+    data: u32,
+    flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT};
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: data,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// Moves the pointer by a relative amount, like a real mouse would.
+pub fn mouse_move_rel(dx: i32, dy: i32) {
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    send_inputs(&[mouse_input(
+        dx,
+        dy,
+        0,
+        windows::Win32::UI::Input::KeyboardAndMouse::MOUSEEVENTF_MOVE,
+    )]);
+}
+
+/// Moves the pointer to absolute screen coordinates.
+pub fn mouse_move_abs(x: i32, y: i32) {
+    // SAFETY: SetCursorPos takes plain coordinates and has no preconditions.
+    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x, y) };
+}
+
+/// Presses or releases a mouse button: 1 left, 2 right, 3 middle, 4 and 5
+/// the side buttons.
+pub fn mouse_button(button: u8, down: bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP,
+    };
+    let (flags, data) = match (button, down) {
+        (1, true) => (MOUSEEVENTF_LEFTDOWN, 0),
+        (1, false) => (MOUSEEVENTF_LEFTUP, 0),
+        (2, true) => (MOUSEEVENTF_RIGHTDOWN, 0),
+        (2, false) => (MOUSEEVENTF_RIGHTUP, 0),
+        (3, true) => (MOUSEEVENTF_MIDDLEDOWN, 0),
+        (3, false) => (MOUSEEVENTF_MIDDLEUP, 0),
+        (4 | 5, true) => (MOUSEEVENTF_XDOWN, u32::from(button - 3)),
+        (4 | 5, false) => (MOUSEEVENTF_XUP, u32::from(button - 3)),
+        _ => return,
+    };
+    send_inputs(&[mouse_input(0, 0, data, flags)]);
+}
+
+/// Types one UTF-16 code unit as a Unicode key press and release.
+pub fn send_unicode(unit: u16) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY,
+    };
+    let key = |up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: if up {
+                    KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+                } else {
+                    KEYEVENTF_UNICODE
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    send_inputs(&[key(false), key(true)]);
+}
+
+/// Types a whole string through Unicode key events.
+pub fn send_text(text: &str) {
+    for unit in text.encode_utf16() {
+        send_unicode(unit);
+    }
+}

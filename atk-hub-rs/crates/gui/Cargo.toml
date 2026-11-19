@@ -34,6 +34,7 @@ atk-features.workspace = true
 atk-input.workspace = true
 atk-hid.workspace = true
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
 
 [lints]
 workspace = true
