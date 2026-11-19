@@ -914,3 +914,345 @@ mod tests {
         assert_eq!(&sent[..9], &[7, 0, 0, 108, 4, 2, 2, 0, triple_crc(2, 2, 0)]);
     }
 }
+
+/// Kind of key event stored in onboard macros and shortcut keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyKind {
+    /// Modifier; `value` is the modifier bit (1 LCtrl, 2 LShift, 4 LAlt, 8 LWin, 16.. right side).
+    Modifier,
+    /// Keyboard key; `value` is the HID usage.
+    Key,
+    /// Consumer (media) key.
+    Media,
+    /// System power key.
+    Power,
+    /// Mouse button; `value` is the button bit.
+    Mouse,
+    /// Wheel; `value` 1 = up, 255 = down.
+    Scroll,
+}
+
+impl KeyKind {
+    fn bits(self) -> u8 {
+        match self {
+            Self::Modifier => 0,
+            Self::Key => 1,
+            Self::Media => 2,
+            Self::Power => 3,
+            Self::Mouse => 4,
+            Self::Scroll => 6,
+        }
+    }
+
+    fn from_bits(bits: u8) -> Self {
+        match bits & 7 {
+            0 => Self::Modifier,
+            2 => Self::Media,
+            3 => Self::Power,
+            4 => Self::Mouse,
+            6 => Self::Scroll,
+            _ => Self::Key,
+        }
+    }
+}
+
+/// One onboard macro or shortcut event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyEvent {
+    /// Event kind.
+    pub kind: KeyKind,
+    /// Press (`true`) or release.
+    pub down: bool,
+    /// Usage, modifier bit, mouse bit or scroll direction.
+    pub value: u8,
+    /// Delay after the event in milliseconds (macros only).
+    #[serde(default)]
+    pub delay_ms: u16,
+}
+
+impl KeyEvent {
+    fn status_byte(&self) -> u8 {
+        let state = if self.kind == KeyKind::Scroll {
+            0
+        } else if self.down {
+            0x80
+        } else {
+            0x40
+        };
+        state | self.kind.bits()
+    }
+
+    fn parse(bytes: &[u8]) -> Self {
+        let status = bytes[0];
+        Self {
+            kind: KeyKind::from_bits(status),
+            down: status & 0x80 != 0,
+            value: bytes[1],
+            delay_ms: bytes
+                .get(3..5)
+                .map_or(0, |delay| u16::from_be_bytes([delay[0], delay[1]])),
+        }
+    }
+}
+
+/// Number of onboard macro slots.
+pub const MACRO_SLOTS: u16 = 12;
+/// Bytes between macro slots.
+pub const MACRO_STRIDE: u16 = 384;
+/// Largest macro the firmware accepts.
+pub const MACRO_MAX_EVENTS: usize = 70;
+/// First shortcut-key block; one per button, 32 bytes apart.
+pub const KEY_SHORTCUTS0: u16 = 256;
+/// Largest shortcut the firmware accepts.
+pub const SHORTCUT_MAX_EVENTS: usize = 6;
+
+/// Macro playback when bound to a button (`value2` of class 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "mode", content = "count")]
+pub enum MacroPlayback {
+    /// Play `count` times (1-252).
+    Loop(u8),
+    /// Stop as soon as the button is released.
+    StopOnRelease,
+    /// Repeat until the same button is pressed again.
+    UntilSameKey,
+    /// Repeat until any button is pressed.
+    UntilAnyKey,
+}
+
+impl MacroPlayback {
+    /// `value2` byte of the button mapping.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Loop(count) => count.clamp(1, 252),
+            Self::StopOnRelease => 254,
+            Self::UntilSameKey => 253,
+            Self::UntilAnyKey => 255,
+        }
+    }
+}
+
+/// Encodes macro events into the EEPROM image written at a slot.
+///
+/// Scroll events expand to a wheel tick plus a release record, as in the
+/// original driver.
+///
+/// # Errors
+///
+/// Returns [`HidError::Invalid`] for too many events.
+pub fn encode_macro(events: &[KeyEvent]) -> Result<Vec<u8>, HidError> {
+    let mut records: Vec<[u8; 5]> = Vec::new();
+    for (index, event) in events.iter().enumerate() {
+        let last = index + 1 == events.len();
+        let delay = if last {
+            event.delay_ms
+        } else {
+            event.delay_ms.max(1)
+        }
+        .to_be_bytes();
+        let mut push = |value: u8| {
+            records.push([event.status_byte(), value, 0, delay[0], delay[1]]);
+        };
+        if event.kind == KeyKind::Scroll {
+            push(if event.value == 1 { 1 } else { 255 });
+            push(0);
+        } else {
+            push(event.value);
+        }
+    }
+    if records.len() > MACRO_MAX_EVENTS {
+        return Err(HidError::Invalid(format!(
+            "macro has {} events; the mouse stores at most {MACRO_MAX_EVENTS}",
+            records.len()
+        )));
+    }
+    let mut image = vec![8_u8];
+    image.extend([2_u8; 8]);
+    image.extend([255_u8; 22]);
+    let mut body = vec![records.len() as u8];
+    for record in &records {
+        body.extend_from_slice(record);
+    }
+    let sum: u32 = body.iter().map(|byte| u32::from(*byte)).sum();
+    body.push((85_u32.wrapping_sub(sum) & 0xff) as u8);
+    image.extend(body);
+    image.resize(image.len().div_ceil(10) * 10, 0);
+    Ok(image)
+}
+
+/// Encodes a shortcut-key block (count, 3-byte records, checksum).
+///
+/// # Errors
+///
+/// Returns [`HidError::Invalid`] for an empty or oversized shortcut.
+pub fn encode_shortcut(events: &[KeyEvent]) -> Result<Vec<u8>, HidError> {
+    if events.is_empty() || events.len() > SHORTCUT_MAX_EVENTS {
+        return Err(HidError::Invalid(format!(
+            "a shortcut needs 1-{SHORTCUT_MAX_EVENTS} events"
+        )));
+    }
+    let mut block = vec![events.len() as u8];
+    for event in events {
+        block.extend_from_slice(&[event.status_byte(), event.value, 0]);
+    }
+    let sum: u32 = block.iter().map(|byte| u32::from(*byte)).sum();
+    block.push((85_u32.wrapping_sub(sum) & 0xff) as u8);
+    block.resize(if block.len() <= 10 { 10 } else { 20 }, 0);
+    Ok(block)
+}
+
+impl<T: Transport> CompxMouse<T> {
+    fn write_chunks(&mut self, address: u16, image: &[u8]) -> Result<(), HidError> {
+        for (index, chunk) in image.chunks(10).enumerate() {
+            let offset = u16::try_from(index * 10).unwrap_or(u16::MAX);
+            self.transfer(Packet::set_eeprom(address + offset, chunk))?;
+        }
+        Ok(())
+    }
+
+    fn macro_address(slot: u16) -> Result<u16, HidError> {
+        if slot >= MACRO_SLOTS {
+            return Err(HidError::Invalid(format!("macro slot {slot}")));
+        }
+        Ok(address::MACRO0 + slot * MACRO_STRIDE)
+    }
+
+    /// Reads the events stored in an onboard macro slot (0-11).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-slot or transport error.
+    pub fn read_macro(&mut self, slot: u16) -> Result<Vec<KeyEvent>, HidError> {
+        let base = Self::macro_address(slot)? + 31;
+        let count = usize::from(self.read(base, 1)?.data(0));
+        if count == 0 || count > MACRO_MAX_EVENTS {
+            return Ok(Vec::new());
+        }
+        let mut events = Vec::with_capacity(count);
+        for chunk in 0..count.div_ceil(2) {
+            let offset = u16::try_from(chunk * 10).unwrap_or(u16::MAX);
+            let packet = self.read(base + 1 + offset, 10)?;
+            let data: Vec<u8> = (0..10).map(|index| packet.data(index)).collect();
+            events.push(KeyEvent::parse(&data[..5]));
+            events.push(KeyEvent::parse(&data[5..]));
+        }
+        events.truncate(count);
+        Ok(events)
+    }
+
+    /// Writes an onboard macro slot (0-11).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input or transport error.
+    pub fn write_macro(&mut self, slot: u16, events: &[KeyEvent]) -> Result<(), HidError> {
+        let address = Self::macro_address(slot)?;
+        let image = encode_macro(events)?;
+        self.write_chunks(address, &image)
+    }
+
+    /// Binds a button to an onboard macro slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input or transport error.
+    pub fn bind_macro(
+        &mut self,
+        button: usize,
+        slot: u8,
+        playback: MacroPlayback,
+    ) -> Result<(), HidError> {
+        self.write_button(button, [6, slot, playback.code()])
+    }
+
+    /// Reads the shortcut-key events of a button.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-index or transport error.
+    pub fn read_shortcut(&mut self, button: usize) -> Result<Vec<KeyEvent>, HidError> {
+        let address = Self::shortcut_address(button)?;
+        let first = self.read(address, 10)?;
+        let count = usize::from(first.data(0));
+        if count == 0 || count > SHORTCUT_MAX_EVENTS {
+            return Ok(Vec::new());
+        }
+        let second = self.read(address + 10, 10)?;
+        let mut bytes: Vec<u8> = (1..10).map(|index| first.data(index)).collect();
+        bytes.extend((0..10).map(|index| second.data(index)));
+        Ok(bytes
+            .chunks(3)
+            .take(count)
+            .map(KeyEvent::parse)
+            .collect())
+    }
+
+    /// Stores a key combination on a button and binds it (class 5).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input or transport error.
+    pub fn write_shortcut(&mut self, button: usize, events: &[KeyEvent]) -> Result<(), HidError> {
+        let address = Self::shortcut_address(button)?;
+        let block = encode_shortcut(events)?;
+        self.write_chunks(address, &block)?;
+        self.write_button(button, [5, 0, 0])
+    }
+
+    fn shortcut_address(button: usize) -> Result<u16, HidError> {
+        if button >= BUTTONS.len() {
+            return Err(HidError::Invalid(format!("button index {button}")));
+        }
+        Ok(KEY_SHORTCUTS0 + 32 * button as u16)
+    }
+}
+
+#[cfg(test)]
+mod onboard_tests {
+    use super::*;
+
+    #[test]
+    fn macro_image_has_header_count_records_and_checksum() {
+        let events = [
+            KeyEvent {
+                kind: KeyKind::Key,
+                down: true,
+                value: 4,
+                delay_ms: 30,
+            },
+            KeyEvent {
+                kind: KeyKind::Key,
+                down: false,
+                value: 4,
+                delay_ms: 0,
+            },
+        ];
+        let image = encode_macro(&events).unwrap();
+        assert_eq!(&image[..9], &[8, 2, 2, 2, 2, 2, 2, 2, 2]);
+        assert_eq!(image[31], 2);
+        assert_eq!(&image[32..37], &[0x81, 4, 0, 0, 30]);
+        assert_eq!(&image[37..42], &[0x41, 4, 0, 0, 0]);
+        let sum: u32 = image[31..42].iter().map(|b| u32::from(*b)).sum();
+        assert_eq!(image[42], (85_u32.wrapping_sub(sum) & 0xff) as u8);
+        assert_eq!(image.len() % 10, 0);
+        assert_eq!(KeyEvent::parse(&image[32..37]), events[0]);
+    }
+
+    #[test]
+    fn shortcut_block_fits_two_packets() {
+        let ctrl = KeyEvent {
+            kind: KeyKind::Modifier,
+            down: true,
+            value: 1,
+            delay_ms: 0,
+        };
+        let block = encode_shortcut(&[ctrl; 6]).unwrap();
+        assert_eq!(block.len(), 20);
+        assert_eq!(block[0], 6);
+        assert_eq!(&block[1..4], &[0x80, 1, 0]);
+        assert!(encode_shortcut(&[ctrl; 7]).is_err());
+    }
+}

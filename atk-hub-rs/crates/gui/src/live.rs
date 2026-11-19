@@ -6,7 +6,8 @@ use atk_config::Config;
 use atk_features::{GameRule, HubSettings, PetSettings};
 use atk_hid::HidError;
 use atk_hid::compx::{
-    CompxMouse, DpiLight, DpiStage, MouseFunction, MouseSnapshot, Performance, ReportRateDpi,
+    CompxMouse, DpiLight, DpiStage, KeyEvent, MacroPlayback, MouseFunction, MouseSnapshot,
+    Performance, ReportRateDpi,
 };
 use atk_hid::{DeviceInfo, HidTransport};
 use serde_json::{Value, json};
@@ -169,6 +170,50 @@ pub async fn mouse_pair_status(state: State<'_, HubState>) -> Result<Value, Stri
 #[tauri::command]
 pub async fn mouse_reset(state: State<'_, HubState>) -> Result<(), String> {
     with_mouse(&state, CompxMouse::factory_reset).await
+}
+
+#[tauri::command]
+pub async fn mouse_macro_read(
+    slot: u16,
+    state: State<'_, HubState>,
+) -> Result<Vec<KeyEvent>, String> {
+    with_mouse(&state, move |mouse| mouse.read_macro(slot)).await
+}
+
+#[tauri::command]
+pub async fn mouse_macro_write(
+    slot: u16,
+    events: Vec<KeyEvent>,
+    button: Option<usize>,
+    playback: Option<MacroPlayback>,
+    state: State<'_, HubState>,
+) -> Result<(), String> {
+    with_mouse(&state, move |mouse| {
+        mouse.write_macro(slot, &events)?;
+        if let Some(button) = button {
+            let slot = u8::try_from(slot).map_err(|_| HidError::Invalid("slot".into()))?;
+            mouse.bind_macro(button, slot, playback.unwrap_or(MacroPlayback::Loop(1)))?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn mouse_shortcut_read(
+    button: usize,
+    state: State<'_, HubState>,
+) -> Result<Vec<KeyEvent>, String> {
+    with_mouse(&state, move |mouse| mouse.read_shortcut(button)).await
+}
+
+#[tauri::command]
+pub async fn mouse_shortcut_write(
+    button: usize,
+    events: Vec<KeyEvent>,
+    state: State<'_, HubState>,
+) -> Result<(), String> {
+    with_mouse(&state, move |mouse| mouse.write_shortcut(button, &events)).await
 }
 
 #[tauri::command]

@@ -98,7 +98,13 @@ function mouseForms(snap) {
       <input type="number" id="dpi-y-${i}" min="50" max="${snap.maxDpi}" step="50" value="${stage.y}" title="Y DPI" />
       <input type="color" id="dpi-color-${i}" value="${rgbHex(stage.color)}" />
     </div>`).join("");
-  const buttons = BUTTON_NAMES.map((name, i) => select(name, `mouse-button-${i}`, BUTTON_ACTIONS, (snap.buttons[i] ?? [0, 0, 0]).join(","))).join("");
+  const buttons = BUTTON_NAMES.map((name, i) => {
+    const current = (snap.buttons[i] ?? [0, 0, 0]).join(",");
+    const known = BUTTON_ACTIONS.some(([value]) => value === current);
+    const [cls, v1, v2] = snap.buttons[i] ?? [0, 0, 0];
+    const label = cls === 5 ? "Key combination" : cls === 6 ? `Macro M${v1 + 1}` : cls === 4 ? `Fire key (${v2}×/${v1} ms)` : `Custom [${current}]`;
+    return select(name, `mouse-button-${i}`, known ? BUTTON_ACTIONS : [[current, label], ...BUTTON_ACTIONS], current);
+  }).join("");
   return `
     <div class="grid two" style="margin-top:18px">
       <article class="card">
@@ -134,7 +140,150 @@ function mouseForms(snap) {
         ${buttons}
         <div class="actions">${`<button class="button" type="button" data-mouse-buttons>Apply Buttons</button>`}</div>
       </article>
+      ${onboardCard()}
     </div>`;
+}
+
+/* ---------------------------------------------- onboard macros & keys -- */
+
+const MOD_BITS = { Control: 1, Shift: 2, Alt: 4, Meta: 8, Win: 8, Ctrl: 1 };
+const VK_MOD = { 16: 2, 17: 1, 18: 4, 91: 8, 92: 128, 160: 2, 161: 32, 162: 1, 163: 16, 164: 4, 165: 64 };
+const NAMED_USAGE = {
+  ENTER: 40, ESC: 41, ESCAPE: 41, BACKSPACE: 42, TAB: 43, SPACE: 44, " ": 44, "-": 45, "=": 46, "[": 47, "]": 48,
+  "\\": 49, ";": 51, "'": 52, "`": 53, ",": 54, ".": 55, "/": 56, CAPSLOCK: 57, PRINTSCREEN: 70, SCROLLLOCK: 71,
+  PAUSE: 72, INSERT: 73, HOME: 74, PAGEUP: 75, DELETE: 76, DEL: 76, END: 77, PAGEDOWN: 78, ARROWRIGHT: 79, RIGHT: 79,
+  ARROWLEFT: 80, LEFT: 80, ARROWDOWN: 81, DOWN: 81, ARROWUP: 82, UP: 82,
+};
+const VK_USAGE = { 8: 42, 9: 43, 13: 40, 20: 57, 27: 41, 32: 44, 33: 75, 34: 78, 35: 77, 36: 74, 37: 80, 38: 82, 39: 79, 40: 81,
+  44: 70, 45: 73, 46: 76, 186: 51, 187: 46, 188: 54, 189: 45, 190: 55, 191: 56, 192: 53, 219: 47, 220: 49, 221: 48, 222: 52 };
+
+function usageForName(name) {
+  const key = String(name).trim().toUpperCase();
+  if (/^[A-Z]$/.test(key)) return 4 + key.charCodeAt(0) - 65;
+  if (/^[1-9]$/.test(key)) return 30 + Number(key) - 1;
+  if (key === "0") return 39;
+  const f = /^F([1-9]|1[0-2])$/.exec(key);
+  if (f) return 57 + Number(f[1]);
+  return NAMED_USAGE[key] ?? null;
+}
+
+function usageForVk(vk) {
+  if (vk >= 65 && vk <= 90) return 4 + vk - 65;
+  if (vk >= 49 && vk <= 57) return 30 + vk - 49;
+  if (vk === 48) return 39;
+  if (vk >= 112 && vk <= 123) return 58 + vk - 112;
+  return VK_USAGE[vk] ?? null;
+}
+
+export function parseShortcut(text) {
+  const parts = String(text).split("+").map((part) => part.trim()).filter(Boolean);
+  const downs = [];
+  for (const part of parts) {
+    const bit = MOD_BITS[part[0].toUpperCase() + part.slice(1).toLowerCase()] ?? MOD_BITS[part];
+    if (bit) { downs.push({ kind: "modifier", down: true, value: bit, delayMs: 0 }); continue; }
+    const usage = usageForName(part);
+    if (usage === null) throw new Error(`Unknown key: ${part}`);
+    downs.push({ kind: "key", down: true, value: usage, delayMs: 0 });
+  }
+  if (downs.length === 0) throw new Error("Enter a key combination such as Ctrl+C");
+  const ups = [...downs].reverse().map((event) => ({ ...event, down: false }));
+  const events = downs.length * 2 <= 6 ? [...downs, ...ups] : downs;
+  if (events.length > 6) throw new Error("The mouse stores at most 6 keys per shortcut");
+  return events;
+}
+
+export function stepsToEvents(steps) {
+  const events = [];
+  for (const step of steps ?? []) {
+    const delayMs = Math.min(65535, Math.max(0, Number(step.delay_ms) || 0));
+    const mod = step.vk !== undefined ? VK_MOD[step.vk] : MOD_BITS[step.key];
+    const usage = step.vk !== undefined ? usageForVk(step.vk) : usageForName(step.key);
+    const kind = mod ? "modifier" : "key";
+    const value = mod ?? usage;
+    if (value === null || value === undefined) throw new Error(`Key ${step.key} cannot be stored on the mouse`);
+    if (step.action) {
+      events.push({ kind, down: step.action === "down", value, delayMs });
+    } else {
+      events.push({ kind, down: true, value, delayMs: 20 }, { kind, down: false, value, delayMs });
+    }
+  }
+  if (events.length > 70) throw new Error("The mouse stores at most 70 events per macro");
+  return events;
+}
+
+function describeEvents(events) {
+  if (!events?.length) return "Empty";
+  return events.map((e) => {
+    const name = e.kind === "modifier" ? (MODIFIERS.find(([bit]) => bit === e.value)?.[1] ?? `mod${e.value}`)
+      : e.kind === "key" ? (HID[e.value]?.[0] ?? `#${e.value}`) : `${e.kind}:${e.value}`;
+    return `${e.down ? "↓" : "↑"}${name}${e.delayMs ? ` ${e.delayMs}ms` : ""}`;
+  }).join("  ");
+}
+
+function onboardCard() {
+  const buttonOptions = BUTTON_NAMES.map((name, i) => [i, name]);
+  const macros = (state.macros ?? []).map((m, i) => [i, m.name]);
+  return `
+      <article class="card">
+        <div class="card-title"><h2>Shortcut keys, macros & fire key</h2><span>stored on the mouse</span></div>
+        ${select("Button", "ob-button", buttonOptions, 3)}
+        ${select("Assign", "ob-kind", [["shortcut", "Key combination"], ["macro", "Onboard macro"], ["fire", "Fire key (rapid click)"]], state.obKind ?? "shortcut")}
+        <div ${state.obKind && state.obKind !== "shortcut" ? "hidden" : ""} data-ob="shortcut">
+          ${field("Keys", "ob-keys", "Ctrl+C")}
+        </div>
+        <div ${state.obKind === "macro" ? "" : "hidden"} data-ob="macro">
+          ${select("Macro slot", "ob-slot", Array.from({ length: 12 }, (_, i) => [i, `M${i + 1}`]), 0)}
+          ${macros.length ? select("Recorded macro", "ob-macro", macros, 0) : `<div class="notice">Record a macro on the Macros page first.</div>`}
+          ${select("Playback", "ob-playback", [["loop", "Play a number of times"], ["stopOnRelease", "Repeat while held"], ["untilSameKey", "Toggle: until pressed again"], ["untilAnyKey", "Until any key is pressed"]], "loop")}
+          ${field("Times", "ob-count", "1", "number")}
+        </div>
+        <div ${state.obKind === "fire" ? "" : "hidden"} data-ob="fire">
+          ${range("Click interval", "ob-interval", 10, 255, 1, 40, " ms")}
+          ${range("Clicks per press", "ob-clicks", 1, 255, 1, 3)}
+        </div>
+        <div class="actions">
+          <button class="button primary" type="button" data-ob-write>Write to Mouse</button>
+          <button class="button" type="button" data-ob-read>Read from Mouse</button>
+        </div>
+        <div class="output" id="ob-output">Shortcuts and macros keep working without ATK HUB running.</div>
+      </article>`;
+}
+
+async function writeOnboard() {
+  const button = num("ob-button", 3);
+  const kind = $("ob-kind").value;
+  if (kind === "shortcut") {
+    const events = parseShortcut($("ob-keys").value);
+    await call("mouse_shortcut_write", { button, events }, "Shortcut stored on the mouse");
+    state.mouse.buttons[button] = [5, 0, 0];
+    show("ob-output", describeEvents(events));
+  } else if (kind === "macro") {
+    const macro = state.macros?.[num("ob-macro", 0)];
+    if (!macro) throw new Error("Record a macro on the Macros page first");
+    const events = stepsToEvents(macro.steps);
+    const mode = $("ob-playback").value;
+    const playback = mode === "loop" ? { mode: "loop", count: Math.max(1, Math.min(252, num("ob-count", 1))) } : { mode };
+    const slot = num("ob-slot", 0);
+    await call("mouse_macro_write", { slot, events, button, playback }, `Macro stored in M${slot + 1}`);
+    show("ob-output", describeEvents(events));
+  } else {
+    const mapping = [4, num("ob-interval", 40), num("ob-clicks", 3)];
+    await call("mouse_button", { index: button, mapping }, "Fire key assigned");
+    state.mouse.buttons[button] = mapping;
+    show("ob-output", `Fire key: ${mapping[2]} clicks every ${mapping[1]} ms`);
+  }
+}
+
+async function readOnboard() {
+  const button = num("ob-button", 3);
+  const mapping = state.mouse?.buttons?.[button] ?? [];
+  if ($("ob-kind").value === "macro") {
+    const slot = num("ob-slot", 0);
+    show("ob-output", `M${slot + 1}: ${describeEvents(await call("mouse_macro_read", { slot }, "Macro read"))}`);
+  } else {
+    const events = await call("mouse_shortcut_read", { button }, "Shortcut read");
+    show("ob-output", `Mapping [${mapping.join(", ")}] · shortcut: ${describeEvents(events)}`);
+  }
 }
 
 export function mousePage() {
@@ -461,6 +610,8 @@ export function wireLiveEvents() {
         renderPage();
       });
     }
+    if ("obWrite" in d) return guarded(t, writeOnboard);
+    if ("obRead" in d) return guarded(t, readOnboard);
     if ("mouseButtons" in d) {
       return guarded(t, async () => {
         for (let i = 0; i < BUTTON_NAMES.length; i += 1) {
@@ -574,6 +725,10 @@ export function wireLiveEvents() {
 
   document.addEventListener("change", (event) => {
     if (event.target.id === "kb-map") loadKeymap(event.target.value);
+    if (event.target.id === "ob-kind") {
+      state.obKind = event.target.value;
+      document.querySelectorAll("[data-ob]").forEach((el) => { el.hidden = el.dataset.ob !== state.obKind; });
+    }
     if (event.target.id === "game-enabled") saveHubSettings({ gameSwitchEnabled: event.target.checked });
     if (event.target.id === "dpi-total") {
       document.querySelectorAll(".dpi-row").forEach((row) => row.classList.toggle("inactive", Number(row.dataset.stage) >= Number(event.target.value)));
@@ -619,6 +774,9 @@ export function wireLiveEvents() {
 export async function loadLivePage(pageId) {
   if (pageId === "mouse") {
     loadMouseExtras();
+    if (!state.macros?.length) {
+      try { state.macros = (await invoke("macros_load")) ?? []; } catch { state.macros = []; }
+    }
     if (!state.mouse && !state.mouseLoading) {
       state.mouseLoading = true;
       await readMouse();
