@@ -693,6 +693,119 @@ textarea {
   color: var(--faint);
 }
 
+.button.sm {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.list-item.interactive {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.list-item.interactive:hover,
+.list-item.interactive.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-row input[type="color"] {
+  width: 44px;
+  height: 36px;
+  padding: 2px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.color-row input[type="range"] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wallpaper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.wallpaper-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+
+.wallpaper-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 105, 0, 0.4);
+}
+
+.wallpaper-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--surface-soft);
+}
+
+.wallpaper-title {
+  font-weight: 650;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallpaper-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.raw-details {
+  margin-top: 12px;
+}
+
+.raw-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.device-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.device-summary strong {
+  font-size: 13px;
+}
+
+.device-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 @media (max-width: 1080px) {
   .quick-nav {
     display: none;

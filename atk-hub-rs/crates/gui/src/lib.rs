@@ -16,7 +16,10 @@ use atk_agent::{AgentClient, DeviceId, PipeName, Rule, RuleAction};
 
 #[cfg(test)]
 const DEFAULT_PIPE: &str = "atk-hub-agent-session-1";
-const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
+const DEFAULT_ASAR: &str = r"C:\Program Files\ATK HUB\resources\app.asar";
+const FALLBACK_ASAR: &str = r"C:\Program Files\ATK HUB\resources\main\app.asar";
+#[cfg(windows)]
+const SERVICE_EXE: &str = r"C:\Program Files\ATK HUB\resources\service\atk-hub-service.exe";
 
 struct HubState {
     #[cfg(windows)]
@@ -176,15 +179,37 @@ fn parse_report(text: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
+fn resolve_asar_path() -> PathBuf {
+    let primary = PathBuf::from(DEFAULT_ASAR);
+    if primary.exists() {
+        return primary;
+    }
+    let fallback = PathBuf::from(FALLBACK_ASAR);
+    if fallback.exists() {
+        return fallback;
+    }
+    primary
+}
+
 #[tauri::command]
-fn app_info() -> Value {
+fn app_info(state: State<'_, HubState>) -> Value {
     let update_host = atk_endpoints::updater_feed_url();
+    let user_data = user_data_dir();
+    let macro_path = state
+        .macro_path
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_else(|_| user_data.join("macros.json").to_string_lossy().into_owned());
     json!({
         "name": "ATK HUB",
         "version": env!("CARGO_PKG_VERSION"),
         "engine": "Tauri + Rust",
         "updateHost": update_host,
-        "userData": user_data_dir().to_string_lossy(),
+        "userData": user_data.to_string_lossy(),
+        "configPath": user_data.join("config.json").to_string_lossy(),
+        "petPath": user_data.join("wooden-fish.json").to_string_lossy(),
+        "macroPath": macro_path,
+        "asarPath": resolve_asar_path().to_string_lossy(),
         "pages": PAGES,
     })
 }
@@ -275,12 +300,17 @@ fn asar_manifest(path: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn default_asar_path() -> String {
-    DEFAULT_ASAR.to_owned()
+    resolve_asar_path().to_string_lossy().into_owned()
 }
 
 #[tauri::command]
 fn config_load(path: String) -> Result<String, String> {
-    let config = Config::parse(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
+    let target = if path.trim().is_empty() {
+        user_data_dir().join("config.json")
+    } else {
+        PathBuf::from(&path)
+    };
+    let config = Config::parse(&fs::read_to_string(&target).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
     config.to_json().map_err(|error| error.to_string())
 }
@@ -299,11 +329,16 @@ fn config_apply(
         .set(&key, parsed)
         .map_err(|error| error.to_string())?;
     let output = config.to_json().map_err(|error| error.to_string())?;
-    if save.unwrap_or(false) && !path.is_empty() {
-        if let Some(parent) = Path::new(&path).parent() {
+    if save.unwrap_or(false) {
+        let target = if path.trim().is_empty() {
+            user_data_dir().join("config.json")
+        } else {
+            PathBuf::from(&path)
+        };
+        if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        fs::write(&path, &output).map_err(|error| error.to_string())?;
+        fs::write(&target, &output).map_err(|error| error.to_string())?;
     }
     Ok(output)
 }
@@ -407,28 +442,98 @@ fn agent_disconnect(state: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn connected_client(
+fn discover_pipe_name() -> Result<PipeName, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    if Path::new(SERVICE_EXE).exists()
+        && let Ok(output) = std::process::Command::new(SERVICE_EXE)
+            .arg("agent-pipe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if let Ok(pipe) = PipeName::parse(&name) {
+            return Ok(pipe);
+        }
+    }
+    PipeName::parse("atk-hub-agent-session-1").map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn ensure_connected(
     state: &HubState,
 ) -> Result<std::sync::MutexGuard<'_, Option<AgentClient>>, String> {
-    let guard = state
+    let mut guard = state
         .client
         .lock()
         .map_err(|_| "state lock poisoned".to_owned())?;
     if guard.is_none() {
-        return Err("Connect to the agent first".to_owned());
+        let pipe = discover_pipe_name()?;
+        let client = AgentClient::connect(&pipe).map_err(|error| error.to_string())?;
+        *guard = Some(client);
     }
     Ok(guard)
+}
+
+#[tauri::command]
+fn agent_auto_connect(state: State<'_, HubState>) -> Value {
+    #[cfg(windows)]
+    {
+        match discover_pipe_name() {
+            Ok(pipe) => match ensure_connected(&state) {
+                Ok(_) => json!({
+                    "connected": true,
+                    "pipe": pipe.as_str(),
+                    "windowsPath": pipe.windows_path(),
+                }),
+                Err(error) => json!({
+                    "connected": false,
+                    "pipe": pipe.as_str(),
+                    "error": error,
+                }),
+            },
+            Err(error) => json!({
+                "connected": false,
+                "error": error,
+            }),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        json!({
+            "connected": false,
+            "error": "agent pipe is only available on Windows",
+        })
+    }
 }
 
 #[cfg(windows)]
 #[tauri::command]
 fn device_list(state: State<'_, HubState>) -> Result<Value, String> {
-    let guard = connected_client(&state)?;
-    guard
-        .as_ref()
-        .expect("checked")
-        .request("device.list", Value::Null)
-        .map_err(|error| error.to_string())
+    let result = {
+        let guard = ensure_connected(&state)?;
+        guard
+            .as_ref()
+            .expect("checked")
+            .request("device.list", Value::Null)
+    };
+    match result {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            *state
+                .client
+                .lock()
+                .map_err(|_| "state lock poisoned".to_owned())? = None;
+            let guard = ensure_connected(&state)?;
+            guard
+                .as_ref()
+                .expect("checked")
+                .request("device.list", Value::Null)
+                .map_err(|error| error.to_string())
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -440,7 +545,7 @@ fn device_list(_state: State<'_, HubState>) -> Result<Value, String> {
 #[cfg(windows)]
 #[tauri::command]
 fn device_control(args: DeviceControlArgs, state: State<'_, HubState>) -> Result<Value, String> {
-    let guard = connected_client(&state)?;
+    let guard = ensure_connected(&state)?;
     let client = guard.as_ref().expect("checked");
     match args.operation.as_str() {
         "connect" => client
@@ -530,16 +635,8 @@ fn audio_spatial(product: String, enabled: bool) -> Result<String, String> {
     Ok("Spatial setting updated".to_owned())
 }
 
-#[tauri::command]
-fn keymaps() -> Result<Vec<String>, String> {
-    let entries =
-        atk_features::list_keymaps(Path::new(DEFAULT_ASAR)).map_err(|error| error.to_string())?;
-    Ok(entries.into_iter().map(|entry| entry.name).collect())
-}
-
-#[tauri::command]
-fn lighting_report(document: String) -> Result<Vec<u8>, String> {
-    let config = Config::parse(&document).map_err(|error| error.to_string())?;
+fn lighting_from_document(document: &str) -> Result<Lighting, String> {
+    let config = Config::parse(document).map_err(|error| error.to_string())?;
     let number = |key: &str| -> u8 {
         config
             .get(key)
@@ -553,8 +650,49 @@ fn lighting_report(document: String) -> Result<Vec<u8>, String> {
         green: number("green"),
         blue: number("blue"),
         brightness: number("brightness"),
+    })
+}
+
+#[tauri::command]
+fn keymaps() -> Result<Vec<String>, String> {
+    let entries =
+        atk_features::list_keymaps(&resolve_asar_path()).map_err(|error| error.to_string())?;
+    Ok(entries.into_iter().map(|entry| entry.name).collect())
+}
+
+#[tauri::command]
+fn lighting_report(document: String) -> Result<Vec<u8>, String> {
+    Ok(lighting_from_document(&document)?.report())
+}
+
+#[tauri::command]
+fn lighting_apply(
+    vendor_id: String,
+    product_id: String,
+    document: String,
+    state: State<'_, HubState>,
+) -> Result<Value, String> {
+    let report = lighting_from_document(&document)?.report();
+    #[cfg(windows)]
+    {
+        let guard = ensure_connected(&state)?;
+        let client = guard.as_ref().expect("checked");
+        client
+            .connect_device(&DeviceId::new(
+                parse_id(&vendor_id)?,
+                parse_id(&product_id)?,
+            ))
+            .map_err(|error| error.to_string())?;
+        let written = client
+            .write_report(&report)
+            .map_err(|error| error.to_string())?;
+        Ok(json!({ "report": report, "result": written }))
     }
-    .report())
+    #[cfg(not(windows))]
+    {
+        let _ = (vendor_id, product_id, state, report);
+        Err("lighting apply is only available on Windows".to_owned())
+    }
 }
 
 #[tauri::command]
@@ -618,6 +756,28 @@ fn macros_add(name: String, keys: String, state: State<'_, HubState>) -> Result<
 }
 
 #[tauri::command]
+fn macros_list(state: State<'_, HubState>) -> Result<Value, String> {
+    let macros = state
+        .macros
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn macros_delete(index: usize, state: State<'_, HubState>) -> Result<Value, String> {
+    let mut macros = state
+        .macros
+        .lock()
+        .map_err(|_| "state lock poisoned".to_owned())?;
+    if index >= macros.len() {
+        return Err("macro not found".to_owned());
+    }
+    macros.remove(index);
+    serde_json::to_value(macros.clone()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn macros_run(index: usize, state: State<'_, HubState>) -> Result<String, String> {
     let macros = state
         .macros
@@ -648,12 +808,17 @@ fn music_stop() -> Result<(), String> {
 
 #[tauri::command]
 fn pets_load(path: String) -> Result<Value, String> {
-    let config =
-        atk_features::load_pet_settings(Path::new(&path)).map_err(|error| error.to_string())?;
+    let target = if path.trim().is_empty() {
+        user_data_dir().join("wooden-fish.json")
+    } else {
+        PathBuf::from(&path)
+    };
+    let config = atk_features::load_pet_settings(&target).map_err(|error| error.to_string())?;
     Ok(json!({
         "enabled": atk_features::pet_enabled(&config, "enabled"),
         "visible": atk_features::pet_enabled(&config, "petVisible"),
         "sound": atk_features::pet_enabled(&config, "sound"),
+        "path": target.to_string_lossy(),
     }))
 }
 
@@ -720,6 +885,7 @@ pub fn run() {
             agent_encode,
             agent_decode,
             agent_validate_pipe,
+            agent_auto_connect,
             agent_connect,
             agent_request,
             agent_disconnect,
@@ -731,10 +897,13 @@ pub fn run() {
             audio_spatial,
             keymaps,
             lighting_report,
+            lighting_apply,
+            macros_list,
             macros_load,
             macros_path,
             macros_save,
             macros_add,
+            macros_delete,
             macros_run,
             music_status,
             music_stop,
