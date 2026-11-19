@@ -208,13 +208,7 @@ pub fn headset_driver_prepare(vendor_id: String, product_id: String) -> Result<V
 
     let dir = thx_dir();
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let name = file_url
-        .split('?')
-        .next()
-        .unwrap_or(file_url)
-        .rsplit('/')
-        .next()
-        .unwrap_or("driver_thx.exe");
+    let name = crate::firmware::safe_filename(file_url, "driver_thx.exe");
     let dest = dir.join(name);
     fs::write(&dest, &bytes).map_err(|error| error.to_string())?;
     set_op(

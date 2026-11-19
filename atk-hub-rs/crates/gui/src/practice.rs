@@ -3,11 +3,12 @@
 //! transitions to the UI for follow-along score practice.
 
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// One background key transition emitted on `music-practice:key`.
 #[derive(Debug, Clone, Serialize)]
@@ -76,10 +77,14 @@ pub fn practice_start(app: AppHandle) -> PracticeStatus {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return PracticeStatus { running: true };
     }
+    let run_id = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
         let mut prev = atk_input::system::poll_async_key_states();
-        while RUNNING.load(Ordering::Relaxed) {
+        while RUNNING.load(Ordering::Relaxed) && GENERATION.load(Ordering::Relaxed) == run_id {
             std::thread::sleep(Duration::from_millis(8));
+            if !RUNNING.load(Ordering::Relaxed) || GENERATION.load(Ordering::Relaxed) != run_id {
+                break;
+            }
             let cur = atk_input::system::poll_async_key_states();
             let buttons =
                 u8::from(cur[0x01]) | (u8::from(cur[0x02]) << 1) | (u8::from(cur[0x04]) << 2);
@@ -103,6 +108,7 @@ pub fn practice_start(app: AppHandle) -> PracticeStatus {
 #[tauri::command]
 pub fn practice_stop() -> PracticeStatus {
     RUNNING.store(false, Ordering::SeqCst);
+    GENERATION.fetch_add(1, Ordering::SeqCst);
     PracticeStatus { running: false }
 }
 

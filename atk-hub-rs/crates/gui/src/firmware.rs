@@ -98,7 +98,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         padded.push(0);
     }
     padded.extend_from_slice(&bit_len.to_be_bytes());
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([
@@ -144,19 +144,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
     h.iter().map(|word| format!("{word:08x}")).collect()
 }
 
-fn safe_filename(url: &str, fallback: &str) -> String {
+pub(crate) fn safe_filename(url: &str, fallback: &str) -> String {
     let raw = url
         .split('?')
         .next()
         .unwrap_or(url)
-        .rsplit('/')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or(fallback);
     let cleaned: String = raw
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
         .collect();
-    if cleaned.is_empty() {
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." || cleaned.contains("..") {
         fallback.to_owned()
     } else {
         cleaned
@@ -279,26 +279,34 @@ pub fn firmware_download(url: String, sha256: Option<String>) -> Result<Value, S
 
 #[tauri::command]
 pub fn firmware_flash(path: String, device_kind: Option<String>) -> Result<Value, String> {
-    let target = Path::new(path.trim());
-    if !target.is_file() {
-        return Err("firmware file does not exist".into());
+    let raw = Path::new(path.trim());
+    if raw
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("only firmware files downloaded by ATK HUB can be flashed".into());
     }
-    let ext = target
+    let canonical = fs::canonicalize(raw).map_err(|_| "firmware file does not exist".to_owned())?;
+    let base = fs::canonicalize(firmware_dir()).unwrap_or_else(|_| firmware_dir());
+    if !canonical.starts_with(&base) || !canonical.is_file() {
+        return Err("only firmware files downloaded by ATK HUB can be flashed".into());
+    }
+    let ext = canonical
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
     let kind = device_kind.unwrap_or_else(|| "device".into());
-    let size = fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+    let size = fs::metadata(&canonical).map(|m| m.len()).unwrap_or(0);
 
     if ext == "exe" {
-        std::process::Command::new(target)
+        std::process::Command::new(&canonical)
             .spawn()
             .map_err(|error| format!("failed to launch firmware updater: {error}"))?;
         return Ok(json!({
             "status": "launched",
             "kind": kind,
-            "path": target.to_string_lossy(),
+            "path": canonical.to_string_lossy(),
             "message": "Vendor firmware updater launched.",
         }));
     }
@@ -306,7 +314,7 @@ pub fn firmware_flash(path: String, device_kind: Option<String>) -> Result<Value
     Ok(json!({
         "status": "staged",
         "kind": kind,
-        "path": target.to_string_lossy(),
+        "path": canonical.to_string_lossy(),
         "size": size,
         "extension": ext,
         "message": format!("Firmware image ({size} bytes) verified and staged for {kind} bootloader."),
@@ -331,5 +339,13 @@ mod tests {
             safe_filename("https://example.com/fw/atk_v2.1.bin?token=123", "fw.bin"),
             "atk_v2.1.bin"
         );
+        assert_eq!(safe_filename("https://example.com/..", "fw.bin"), "fw.bin");
+        assert_eq!(safe_filename("https://example.com/", "fw.bin"), "fw.bin");
+    }
+
+    #[test]
+    fn firmware_flash_rejects_paths_outside_firmware_dir() {
+        assert!(firmware_flash("C:\\Windows\\System32\\cmd.exe".into(), None).is_err());
+        assert!(firmware_flash("..\\cmd.exe".into(), None).is_err());
     }
 }

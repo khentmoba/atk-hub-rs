@@ -1020,12 +1020,20 @@ fn launch(path: &Path) -> Result<(), String> {
 
 #[tauri::command]
 pub fn installer_launch(path: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    let temp = std::env::temp_dir();
-    if !path.starts_with(&temp) {
+    let raw = PathBuf::from(&path);
+    if raw
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err("only installers downloaded by ATK HUB can be launched".to_owned());
     }
-    launch(&path)
+    let canonical =
+        std::fs::canonicalize(&raw).map_err(|_| "installer file does not exist".to_owned())?;
+    let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+    if !canonical.starts_with(&temp) {
+        return Err("only installers downloaded by ATK HUB can be launched".to_owned());
+    }
+    launch(&canonical)
 }
 
 #[tauri::command]

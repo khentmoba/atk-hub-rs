@@ -18,20 +18,22 @@ const SILENT: u32 = 2;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
 const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
-struct Com;
+struct Com(bool);
 
 impl Com {
     fn init() -> Self {
-        // SAFETY: balanced by `CoUninitialize` in `Drop` on the same thread.
-        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        Self
+        // SAFETY: balanced by `CoUninitialize` in `Drop` on the same thread when S_OK/S_FALSE.
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        Self(hr.is_ok())
     }
 }
 
 impl Drop for Com {
     fn drop(&mut self) {
-        // SAFETY: paired with the `CoInitializeEx` in `Com::init`.
-        unsafe { CoUninitialize() };
+        if self.0 {
+            // SAFETY: paired with the successful `CoInitializeEx` in `Com::init`.
+            unsafe { CoUninitialize() };
+        }
     }
 }
 

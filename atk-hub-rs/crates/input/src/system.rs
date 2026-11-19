@@ -484,29 +484,31 @@ pub fn attach_to_desktop(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -
         let mut worker = HWND::default();
         let _ = EnumWindows(Some(find_worker), LPARAM(&raw mut worker as isize));
 
-        let style = GetWindowLongPtrW(window, GWL_STYLE);
-        SetWindowLongPtrW(
-            window,
-            GWL_STYLE,
-            (style & !(WS_POPUP.0 as isize)) | WS_CHILD.0 as isize,
-        );
-        let ex = GetWindowLongPtrW(window, GWL_EXSTYLE);
-        SetWindowLongPtrW(
-            window,
-            GWL_EXSTYLE,
-            (ex & !(WS_EX_APPWINDOW.0 as isize))
-                | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
-        );
-
         let origin = (
             GetSystemMetrics(SM_XVIRTUALSCREEN),
             GetSystemMetrics(SM_YVIRTUALSCREEN),
         );
         let flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        let apply_child_styles = || {
+            let style = GetWindowLongPtrW(window, GWL_STYLE);
+            SetWindowLongPtrW(
+                window,
+                GWL_STYLE,
+                (style & !(WS_POPUP.0 as isize)) | WS_CHILD.0 as isize,
+            );
+            let ex = GetWindowLongPtrW(window, GWL_EXSTYLE);
+            SetWindowLongPtrW(
+                window,
+                GWL_EXSTYLE,
+                (ex & !(WS_EX_APPWINDOW.0 as isize))
+                    | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
+            );
+        };
         if !worker.is_invalid() {
             if SetParent(window, Some(worker)).is_err() {
                 return false;
             }
+            apply_child_styles();
             let _ = SetWindowPos(
                 window,
                 None,
@@ -526,6 +528,7 @@ pub fn attach_to_desktop(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -
         if SetParent(window, Some(progman)).is_err() {
             return false;
         }
+        apply_child_styles();
         let _ = SetWindowPos(
             window,
             Some(defview),

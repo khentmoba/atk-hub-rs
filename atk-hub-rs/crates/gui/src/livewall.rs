@@ -155,6 +155,30 @@ fn dir() -> PathBuf {
     user_data_dir().join("wallpapers")
 }
 
+fn safe_ext(source: &str) -> String {
+    let base = source
+        .split('?')
+        .next()
+        .unwrap_or(source)
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("");
+    let ext = base
+        .rsplit_once('.')
+        .map(|(_, ext)| {
+            ext.chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+    if ext.is_empty() || ext.len() > 12 {
+        "bin".to_owned()
+    } else {
+        ext
+    }
+}
+
 fn store_path() -> PathBuf {
     dir().join("live-wallpapers.json")
 }
@@ -519,13 +543,11 @@ pub async fn livewall_download(
                 break;
             }
             bytes.extend_from_slice(&chunk[..read]);
-            if total > 0 {
-                let percent = bytes.len() as u64 * 100 / total;
-                if percent != last {
-                    last = percent;
-                    let _ =
-                        handle.emit("livewall:progress", json!({ "id": id, "percent": percent }));
-                }
+            if let Some(percent) = (bytes.len() as u64 * 100).checked_div(total)
+                && percent != last
+            {
+                last = percent;
+                let _ = handle.emit("livewall:progress", json!({ "id": id, "percent": percent }));
             }
         }
         std::fs::create_dir_all(dir()).map_err(|error| error.to_string())?;
@@ -535,11 +557,7 @@ pub async fn livewall_download(
             let size = dir_size(&folder);
             (folder, Some(entry), size)
         } else {
-            let ext = path_part
-                .rsplit('.')
-                .next()
-                .unwrap_or("bin")
-                .to_ascii_lowercase();
+            let ext = safe_ext(path_part);
             let file = dir().join(format!("{id}.{ext}"));
             std::fs::write(&file, &bytes).map_err(|error| error.to_string())?;
             (file, None, bytes.len() as u64)
@@ -718,11 +736,7 @@ pub async fn livewall_import(
         let size = dir_size(&folder);
         (folder, Some(entry), size)
     } else {
-        let ext = name
-            .rsplit('.')
-            .next()
-            .unwrap_or("bin")
-            .to_ascii_lowercase();
+        let ext = safe_ext(&name);
         let file = dir().join(format!("{id}.{ext}"));
         std::fs::write(&file, bytes).map_err(|error| error.to_string())?;
         (file, None, bytes.len() as u64)
