@@ -1183,11 +1183,7 @@ impl<T: Transport> CompxMouse<T> {
         let second = self.read(address + 10, 10)?;
         let mut bytes: Vec<u8> = (1..10).map(|index| first.data(index)).collect();
         bytes.extend((0..10).map(|index| second.data(index)));
-        Ok(bytes
-            .chunks(3)
-            .take(count)
-            .map(KeyEvent::parse)
-            .collect())
+        Ok(bytes.chunks(3).take(count).map(KeyEvent::parse).collect())
     }
 
     /// Stores a key combination on a button and binds it (class 5).

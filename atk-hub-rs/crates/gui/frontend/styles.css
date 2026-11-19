@@ -940,3 +940,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 .modal { max-width: 420px; width: calc(100% - 48px); }
 .modal h2 { margin: 0 0 6px; }
+.kb-key[data-r] { cursor: pointer; }
+.kb-key.selected { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--accent-soft); }
+optgroup { font-weight: 600; }

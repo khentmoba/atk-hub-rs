@@ -30,6 +30,7 @@ struct HubState {
     macro_path: Mutex<String>,
     macros: Mutex<Vec<Macro>>,
     mouse: live::SharedMouse,
+    keyboard: live::SharedKeyboard,
     settings: Arc<Mutex<HubSettings>>,
     games: Arc<Mutex<Vec<GameRule>>>,
 }
@@ -42,6 +43,7 @@ impl Default for HubState {
             macro_path: Mutex::new(user_data.join("macros.json").to_string_lossy().into_owned()),
             macros: Mutex::new(Vec::new()),
             mouse: Arc::new(Mutex::new(None)),
+            keyboard: Arc::new(Mutex::new(None)),
             settings: Arc::new(Mutex::new(live::read_settings())),
             games: Arc::new(Mutex::new(live::initial_game_rules())),
         }
@@ -97,7 +99,7 @@ const PAGES: &[PageInfo] = &[
     PageInfo {
         id: "keyboard",
         label: "Keyboard",
-        subtitle: "Layout and key tester",
+        subtitle: "Key remap, layers, magnetic switches and backlight",
         group: "Device",
     },
     PageInfo {
@@ -956,6 +958,16 @@ pub fn run() {
             live::pets_load,
             live::pets_save,
             live::mouse_list,
+            live::kb_list,
+            live::kb_snapshot,
+            live::kb_keymap,
+            live::kb_set_key,
+            live::kb_reset_keymap,
+            live::kb_apply,
+            live::kb_actuation,
+            live::kb_set_actuation,
+            live::kb_rapid_trigger,
+            live::kb_set_rapid_trigger,
             live::mouse_snapshot,
             live::mouse_apply,
             live::mouse_button,

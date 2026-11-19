@@ -6,6 +6,8 @@
 
 pub mod compx;
 pub mod dpi;
+mod kb_models;
+pub mod keyboard;
 mod models;
 mod tables;
 
@@ -47,6 +49,27 @@ pub trait Transport {
     ///
     /// Returns an I/O error or a timeout.
     fn transfer(&mut self, report_id: u8, data: &[u8], expect: u8) -> Result<Vec<u8>, HidError>;
+
+    /// Like [`Transport::transfer`], but waits for the first report that
+    /// `accept` approves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error or a timeout.
+    fn transfer_where(
+        &mut self,
+        report_id: u8,
+        data: &[u8],
+        accept: &dyn Fn(&[u8]) -> bool,
+    ) -> Result<Vec<u8>, HidError> {
+        let expect = data.first().copied().unwrap_or(0);
+        let reply = self.transfer(report_id, data, expect)?;
+        if accept(&reply) {
+            Ok(reply)
+        } else {
+            Err(HidError::Timeout(expect))
+        }
+    }
 }
 
 /// A connected configuration interface.
@@ -142,6 +165,11 @@ impl HidTransport {
         })
     }
 
+    /// Changes how long a transfer waits for its reply.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
     /// Writes a report, padding it to the interface's declared output length.
     ///
     /// Windows rejects output buffers whose size differs from the report
@@ -183,6 +211,18 @@ impl HidTransport {
 
 impl Transport for HidTransport {
     fn transfer(&mut self, report_id: u8, data: &[u8], expect: u8) -> Result<Vec<u8>, HidError> {
+        self.transfer_where(report_id, data, &|payload: &[u8]| {
+            payload.first() == Some(&expect)
+        })
+    }
+
+    fn transfer_where(
+        &mut self,
+        report_id: u8,
+        data: &[u8],
+        accept: &dyn Fn(&[u8]) -> bool,
+    ) -> Result<Vec<u8>, HidError> {
+        let expect = data.first().copied().unwrap_or(0);
         // Drain stale reports so replies correlate with this request.
         let mut scratch = [0_u8; 1024];
         while self.device.read_timeout(&mut scratch, 0)? > 0 {}
@@ -204,7 +244,7 @@ impl Transport for HidTransport {
                 } else {
                     &scratch[..count]
                 };
-                if payload.first() == Some(&expect) {
+                if accept(payload) {
                     return Ok(payload.to_vec());
                 }
             }

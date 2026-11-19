@@ -415,13 +415,18 @@ function renderKeyboard() {
   const doc = state.keymapDoc;
   if (!doc) { box.innerHTML = `<div class="notice">Select a keymap to render its layout.</div>`; return; }
   const unit = 44;
+  const live = state.kbMap;
   box.innerHTML = doc.layouts.keymap.map((row) => `<div class="kb-row">${row.map((key) => {
     const info = keyInfo(key);
+    const [r, c] = key.index ?? [0, 0];
+    const code = live?.[r]?.[c];
+    const label = code === undefined ? info.label : kbLabel(code);
+    const selected = state.kbSel && state.kbSel[0] === r && state.kbSel[1] === c ? "selected" : "";
     const style = [`width:${(key.w ?? 1) * unit - 4}px`, `height:${(key.h ?? 1) * unit - 4}px`,
       key.ml ? `margin-left:${key.ml * unit}px` : "", key.mr ? `margin-right:${key.mr * unit}px` : "",
       key.mt ? `margin-top:${key.mt * unit}px` : ""].filter(Boolean).join(";");
     const pressed = info.code && state.testedKeys.has(info.code) ? "tested" : "";
-    return `<div class="kb-key ${pressed}" data-code="${escapeHtml(info.code)}" style="${style}" title="row ${key.index[0]}, col ${key.index[1]}">${escapeHtml(info.label)}</div>`;
+    return `<div class="kb-key ${pressed} ${selected}" data-code="${escapeHtml(info.code)}" data-r="${r}" data-c="${c}" style="${style}" title="row ${r}, col ${c}${code === undefined ? "" : ` · 0x${code.toString(16)}`}">${escapeHtml(label)}</div>`;
   }).join("")}</div>`).join("");
   const count = $("kb-tested");
   if (count) count.textContent = `${state.testedKeys.size} key(s) tested`;
@@ -431,15 +436,300 @@ export function keyboardPage() {
   const maps = (state.keymaps ?? []).map((name) => [name, name.replace(/\.json$/, "")]);
   return `
     ${pageHeading(state.pages.find((page) => page.id === "keyboard"))}
+    ${kbDeviceCards()}
     <article class="card">
       <div class="card-title"><h2>${escapeHtml(state.keymapDoc?.name ?? "Keyboard layout")}</h2><span id="kb-tested">0 key(s) tested</span></div>
       <div class="actions" style="align-items:flex-end">
         ${maps.length ? select("Keymap", "kb-map", maps, state.keymapName ?? maps[0][0]) : ""}
         <button class="button" type="button" data-kb-reset>Reset Tester</button>
+        ${state.kb ? select("Layer", "kb-layer", Array.from({ length: state.kb.model.layers }, (_, i) => [i, i === 0 ? "Layer 1 (base)" : `Layer ${i + 1} (Fn${i > 1 ? i : ""})`]), state.kbLayer ?? 0) : ""}
       </div>
+      ${state.kb ? kbRemapPanel() : ""}
       <div class="kb-wrap"><div class="kb" id="keyboard-layout">Loading layout…</div></div>
       <div class="notice" style="margin-top:14px">Key tester: press keys on your keyboard; each key lights up when its press is detected.</div>
     </article>`;
+}
+
+/* ------------------------------------------------- keyboard: device side -- */
+
+const MEDIA = { 165: "Power", 166: "Sleep", 167: "Wake", 168: "Mute", 169: "Vol+", 170: "Vol-", 171: "Next", 172: "Prev",
+  173: "Stop", 174: "Play", 175: "Player", 176: "Eject", 177: "Mail", 178: "Calc", 179: "My PC", 180: "Search", 181: "Home page",
+  182: "Back", 183: "Forward", 184: "Web stop", 185: "Refresh", 186: "Favorites", 187: "FF", 188: "Rewind", 189: "Bright+", 190: "Bright-",
+  193: "Mission Ctrl", 194: "Launchpad", 2055: "Desktop", 2063: "Lock PC" };
+const MOD_KEYS = { 224: "LCtrl", 225: "LShift", 226: "LAlt", 227: "LWin", 228: "RCtrl", 229: "RShift", 230: "RAlt", 231: "RWin" };
+const YOGO = { 32256: "Reset", 32257: "BT1", 32258: "BT2", 32259: "BT3", 32260: "2.4G", 32261: "USB", 32262: "Battery", 32263: "NKRO",
+  32264: "Wireless", 32266: "WASD", 32268: "BL Tog", 32269: "BL Mode+", 32270: "BL Mode-", 32273: "BL Bri+", 32274: "BL Bri-",
+  32275: "BL Spd+", 32276: "BL Spd-" };
+const LAYER_KINDS = ["TO", "MO", "DF", "TG", "OSL", "TT"];
+
+/** QMK keycode bases: protocol 11+ (VIA v3) moved the layer, macro, mouse and RGB ranges. */
+function kbBases() {
+  const modern = (state.kb?.protocol ?? 9) >= 11;
+  return modern
+    ? { layer: [20992, 21024, 21056, 21088, 21120, 21184], macro: 30464, mouse: 205, rgb: 30752 }
+    : { layer: [20496, 20736, 20992, 21248, 21504, 22528], macro: 24338, mouse: 240, rgb: 23746 };
+}
+
+const MOUSE_KEYS = ["Mouse ↑", "Mouse ↓", "Mouse ←", "Mouse →", "Click L", "Click R", "Click M", "Mouse 4", "Mouse 5", "Wheel ↑", "Wheel ↓", "Wheel ←", "Wheel →"];
+const RGB_KEYS = ["RGB Toggle", "RGB Mode+", "RGB Mode-", "Hue+", "Hue-", "Sat+", "Sat-", "Bright+", "Bright-", "Speed+", "Speed-"];
+
+export function kbLabel(code) {
+  if (code === 0) return "";
+  if (code === 1) return "▽";
+  if (HID[code]) return HID[code][0];
+  if (MOD_KEYS[code]) return MOD_KEYS[code];
+  if (MEDIA[code]) return MEDIA[code];
+  if (YOGO[code]) return YOGO[code];
+  const b = kbBases();
+  for (let k = 0; k < LAYER_KINDS.length; k += 1) {
+    if (code >= b.layer[k] && code < b.layer[k] + 16) return `${LAYER_KINDS[k]}(${code - b.layer[k]})`;
+  }
+  if (code >= b.macro && code < b.macro + 16) return `M${code - b.macro}`;
+  if (code >= b.mouse && code < b.mouse + MOUSE_KEYS.length) return MOUSE_KEYS[code - b.mouse];
+  if (code >= b.rgb && code < b.rgb + RGB_KEYS.length) return RGB_KEYS[code - b.rgb];
+  if (code >= 0x100 && code < 0x2000) {
+    const mods = (code >> 8) & 0x1f;
+    const right = mods & 0x10;
+    const names = [[1, "Ctrl"], [2, "Shift"], [4, "Alt"], [8, "Win"]].filter(([bit]) => mods & bit).map(([, n]) => (right ? "R" : "") + n);
+    return `${names.join("+")}+${HID[code & 0xff]?.[0] ?? (code & 0xff)}`;
+  }
+  return `0x${code.toString(16)}`;
+}
+
+function kbKeyGroups() {
+  const b = kbBases();
+  const basic = Object.keys(HID).map(Number).map((code) => [code, HID[code][0]]);
+  return [
+    ["Basic", [[0, "None (disable)"], [1, "Transparent ▽"], ...basic]],
+    ["Modifiers", Object.entries(MOD_KEYS).map(([c, n]) => [Number(c), n])],
+    ["Media & system", Object.entries(MEDIA).map(([c, n]) => [Number(c), n])],
+    ...LAYER_KINDS.map((kind, k) => [`${kind} layer`, Array.from({ length: state.kb?.model.layers ?? 4 }, (_, n) => [b.layer[k] + n, `${kind}(${n})`])]),
+    ["Macros", Array.from({ length: 16 }, (_, n) => [b.macro + n, `M${n}`])],
+    ["Mouse", MOUSE_KEYS.map((name, n) => [b.mouse + n, name])],
+    ["Lighting", RGB_KEYS.map((name, n) => [b.rgb + n, name])],
+    ["Keyboard functions", Object.entries(YOGO).map(([c, n]) => [Number(c), n])],
+  ];
+}
+
+function kbRemapPanel() {
+  const sel = state.kbSel;
+  const current = sel ? state.kbMap?.[sel[0]]?.[sel[1]] : undefined;
+  const groups = kbKeyGroups().map(([label, options]) => `<optgroup label="${escapeHtml(label)}">${options.map(([value, name]) =>
+    `<option value="${value}" ${value === current ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</optgroup>`).join("");
+  return `
+      <div class="actions" style="align-items:flex-end;margin-top:10px">
+        <label class="field"><span>${sel ? `Key r${sel[0]} c${sel[1]} · now ${escapeHtml(kbLabel(current ?? 0) || "None")}` : "Click a key above to remap it"}</span>
+          <select id="kb-code" ${sel ? "" : "disabled"}>${groups}</select></label>
+        <label class="field"><span>Combo modifier</span><select id="kb-mod" ${sel ? "" : "disabled"}>
+          <option value="0">None</option><option value="1">Ctrl+</option><option value="2">Shift+</option><option value="4">Alt+</option><option value="8">Win+</option>
+          <option value="3">Ctrl+Shift+</option><option value="5">Ctrl+Alt+</option></select></label>
+        <button class="button primary" type="button" data-kb-assign ${sel ? "" : "disabled"}>Assign Key</button>
+        <button class="button" type="button" data-kb-reset-map>Restore Default Keymap</button>
+      </div>`;
+}
+
+const LIGHT_EFFECTS = [[0, "Off"], [1, "Custom"], [2, "Static"], [3, "Focus"], [4, "Rainbow ↕"], [5, "Rainbow ↔"], [6, "Breathing"],
+  [7, "Ribbon"], [8, "Laser"], [9, "Pinwheel"], [11, "Vortex"], [13, "Spectrum cycle"], [14, "Streamer"], [19, "Colorful swirl"],
+  [23, "Double vortex"], [25, "Christmas"], [26, "Spectrum breathing"], [28, "Spectrum floating"], [30, "Digital rain"],
+  [31, "Light up on press"], [36, "Crucifix"]];
+const SLEEP = [[0, "Never"], [60, "1 min"], [180, "3 min"], [300, "5 min"], [600, "10 min"], [1800, "30 min"]];
+
+function hex(rgb) {
+  return `#${(rgb ?? [255, 255, 255]).map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function kbDeviceCards() {
+  const kb = state.kb;
+  if (!kb) {
+    return `
+    <article class="card">
+      <div class="card-title"><h2>Keyboard</h2><span>${escapeHtml(state.kbError ?? "Not connected")}</span></div>
+      <div class="actions"><button class="button primary" type="button" data-kb-read>Connect Keyboard</button></div>
+      <div class="notice">Plug in an ATK / VXE magnetic keyboard (wired or 2.4G) to remap keys, set actuation and rapid trigger, and change lighting.</div>
+    </article>`;
+  }
+  const t = kb.travel;
+  const actMin = t.travelMin || 0.1;
+  const actMax = t.travelMax || 3.4;
+  const actStep = t.travelStep || 0.01;
+  const rtMin = t.rtMin || 0.01;
+  const rtMax = t.rtMax || 2;
+  const rtStep = t.rtStep || 0.01;
+  const l = kb.lighting;
+  const f = kb.features;
+  const profiles = [0, 1, 2, 3].map((p) => `<button class="button sm ${p === kb.profile ? "primary" : ""}" type="button" data-kb-profile="${p}">Profile ${p + 1}</button>`).join("");
+  return `
+    <article class="card">
+      <div class="mouse-head">
+        <div><h2>${escapeHtml(kb.model.name)}</h2><span>Firmware ${escapeHtml(kb.version || "?")} · VIA ${kb.protocol} · ${kb.model.rows}×${kb.model.cols}, ${kb.model.layers} layers</span></div>
+        <div class="actions">${profiles}<button class="button sm" type="button" data-kb-read>Refresh</button></div>
+      </div>
+    </article>
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Backlight</h2><span>${escapeHtml(LIGHT_EFFECTS.find(([v]) => v === l.mode)?.[1] ?? `Effect ${l.mode}`)}</span></div>
+        ${select("Effect", "kb-effect", LIGHT_EFFECTS, l.mode)}
+        ${range("Brightness", "kb-bright", 0, 100, 1, l.brightness)}
+        ${range("Speed", "kb-speed", 0, 255, 1, l.speed)}
+        <label class="field"><span>Colour</span><input id="kb-color" type="color" value="${hex(l.color)}"></label>
+        ${toggle("Rainbow colours", "kb-colorful", l.colorful)}
+        ${select("Sleep after", "kb-sleep", SLEEP, kb.sleepSecs)}
+        <div class="actions"><button class="button primary" type="button" data-kb-light>Apply Lighting</button></div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Functions</h2><span>${kb.reportRate} Hz</span></div>
+        ${select("Polling rate", "kb-rate", [[1000, "1000 Hz"], [2000, "2000 Hz"], [4000, "4000 Hz"], [8000, "8000 Hz"]], kb.reportRate)}
+        ${toggle("Swap WASD and arrow keys", "kb-wasd", f.wasdSwap)}
+        ${toggle("Lock Windows key", "kb-winlock", f.winLock)}
+        ${toggle("macOS layout", "kb-mac", f.mac)}
+        ${toggle("Performance (game) mode", "kb-game", kb.gameMode)}
+        <div class="actions"><button class="button primary" type="button" data-kb-functions>Apply Functions</button></div>
+      </article>
+    </div>
+    <article class="card">
+      <div class="card-title"><h2>Magnetic switches</h2><span>${state.kbSel ? `selected key r${state.kbSel[0]} c${state.kbSel[1]}` : "all keys"}</span></div>
+      <div class="grid two">
+        <div>
+          ${range("Actuation point", "kb-act", actMin, actMax, actStep, state.kbAct ?? Math.min(actMax, Math.max(actMin, 1.2)), " mm")}
+          ${toggle("Rapid trigger", "kb-rt", state.kbRtOn ?? false)}
+          ${range("Press sensitivity", "kb-rt-press", rtMin, rtMax, rtStep, state.kbRtPress ?? Math.max(rtMin, 0.1), " mm")}
+          ${range("Release sensitivity", "kb-rt-release", rtMin, rtMax, rtStep, state.kbRtRelease ?? Math.max(rtMin, 0.1), " mm")}
+        </div>
+        <div>
+          ${range("Top dead zone", "kb-dz-top", 0, 1, 0.01, kb.deadZone[0], " mm")}
+          ${range("Bottom dead zone", "kb-dz-bottom", 0, 1, 0.01, kb.deadZone[1], " mm")}
+          ${toggle("Apply to the selected key only", "kb-only-sel", Boolean(state.kbSel))}
+        </div>
+      </div>
+      <div class="actions">
+        <button class="button primary" type="button" data-kb-magnet>Apply Switch Settings</button>
+        <button class="button" type="button" data-kb-magnet-read>Read Current Values</button>
+      </div>
+      <div class="output" id="kb-output">Actuation range ${actMin}–${actMax} mm · rapid trigger ${rtMin}–${rtMax} mm.</div>
+    </article>`;
+}
+
+async function readKeyboard() {
+  try {
+    state.kb = await invoke("kb_snapshot");
+    state.kbError = null;
+    state.kbLayer = Math.min(state.kbLayer ?? 0, state.kb.model.layers - 1);
+    state.kbMap = await invoke("kb_keymap", { layer: state.kbLayer });
+    setStatus(`${state.kb.model.name} connected`);
+  } catch (error) {
+    state.kb = null;
+    state.kbMap = null;
+    state.kbError = errorText(error);
+  }
+  if (state.current === "keyboard") { renderPage(); await loadKeymap(state.keymapName ?? state.keymaps?.[0]); }
+}
+
+async function kbApply(patch, message) {
+  state.kb = await call("kb_apply", { patch }, message);
+  renderPage();
+  await loadKeymap(state.keymapName ?? state.keymaps?.[0]);
+}
+
+function kbIndex() {
+  const [r, c] = state.kbSel;
+  return r * state.kb.model.cols + c;
+}
+
+async function kbMagnet() {
+  const only = $("kb-only-sel")?.checked && state.kbSel;
+  const count = state.kb.model.rows * state.kb.model.cols;
+  const point = num("kb-act", 1.2);
+  const rt = { on: $("kb-rt").checked, press: num("kb-rt-press", 0.1), release: num("kb-rt-release", 0.1) };
+  Object.assign(state, { kbAct: point, kbRtOn: rt.on, kbRtPress: rt.press, kbRtRelease: rt.release });
+  let points = Array(count).fill(point);
+  let keys = Array(count).fill(rt);
+  if (only) {
+    points = await invoke("kb_actuation");
+    keys = await invoke("kb_rapid_trigger");
+    points[kbIndex()] = point;
+    keys[kbIndex()] = rt;
+  }
+  show("kb-output", "Writing actuation…");
+  await invoke("kb_set_actuation", { points });
+  show("kb-output", "Writing rapid trigger…");
+  await invoke("kb_set_rapid_trigger", { keys });
+  await call("kb_apply", { patch: { deadZone: [num("kb-dz-top", 0), num("kb-dz-bottom", 0)] } }, "Switch settings saved");
+  show("kb-output", `${only ? "Selected key" : "All keys"}: actuation ${point} mm · rapid trigger ${rt.on ? `on (${rt.press}/${rt.release} mm)` : "off"}`);
+}
+
+async function kbMagnetRead() {
+  const points = await invoke("kb_actuation");
+  const keys = await invoke("kb_rapid_trigger");
+  const i = state.kbSel ? kbIndex() : 0;
+  const values = points.filter((v) => v > 0);
+  show("kb-output", state.kbSel
+    ? `Key r${state.kbSel[0]} c${state.kbSel[1]}: actuation ${points[i]} mm · rapid trigger ${keys[i]?.on ? `on ${keys[i].press}/${keys[i].release} mm` : "off"}`
+    : `Actuation ${Math.min(...values)}–${Math.max(...values)} mm across ${values.length} keys · rapid trigger on ${keys.filter((k) => k.on).length} keys`);
+  if (keys[i]) Object.assign(state, { kbAct: points[i], kbRtOn: keys[i].on, kbRtPress: keys[i].press || state.kbRtPress, kbRtRelease: keys[i].release || state.kbRtRelease });
+}
+
+export async function kbHandleClick(t) {
+  const d = t.dataset;
+  if (t.classList.contains("kb-key") && d.r !== undefined) {
+    if (!state.kb) return true;
+    const sel = [Number(d.r), Number(d.c)];
+    state.kbSel = state.kbSel && state.kbSel[0] === sel[0] && state.kbSel[1] === sel[1] ? null : sel;
+    renderPage();
+    await loadKeymap(state.keymapName ?? state.keymaps?.[0]);
+    return true;
+  }
+  if ("kbRead" in d) { await guarded(t, readKeyboard); return true; }
+  if (d.kbProfile !== undefined) {
+    await guarded(t, async () => {
+      await kbApply({ profile: Number(d.kbProfile) }, "Profile switched");
+      state.kbMap = await invoke("kb_keymap", { layer: state.kbLayer ?? 0 });
+      renderKeyboard();
+    });
+    return true;
+  }
+  if ("kbLight" in d) {
+    const color = $("kb-color").value.match(/[0-9a-f]{2}/gi).map((v) => parseInt(v, 16));
+    await guarded(t, () => kbApply({
+      lighting: { mode: num("kb-effect", 0), brightness: num("kb-bright", 100), speed: num("kb-speed", 128), color, colorful: $("kb-colorful").checked ? 1 : 0 },
+      sleepSecs: num("kb-sleep", 0),
+    }, "Lighting applied"));
+    return true;
+  }
+  if ("kbFunctions" in d) {
+    const f = state.kb.features;
+    await guarded(t, () => kbApply({
+      reportRate: num("kb-rate", 1000),
+      gameMode: $("kb-game").checked,
+      features: { ...f, wasdSwap: $("kb-wasd").checked ? 1 : 0, winLock: $("kb-winlock").checked ? 1 : 0, mac: $("kb-mac").checked ? 1 : 0 },
+    }, "Functions applied"));
+    return true;
+  }
+  if ("kbAssign" in d && state.kbSel) {
+    await guarded(t, async () => {
+      let code = num("kb-code", 0);
+      const mod = num("kb-mod", 0);
+      if (mod && code >= 4 && code <= 0xff) code |= mod << 8;
+      const [row, col] = state.kbSel;
+      await call("kb_set_key", { layer: state.kbLayer ?? 0, row, col, code }, `Key set to ${kbLabel(code)}`);
+      state.kbMap[row][col] = code;
+      renderKeyboard();
+    });
+    return true;
+  }
+  if ("kbResetMap" in d) {
+    if (!state.confirmKbReset) { state.confirmKbReset = true; t.textContent = "Click again to confirm"; return true; }
+    state.confirmKbReset = false;
+    await guarded(t, async () => {
+      await call("kb_reset_keymap", {}, "Default keymap restored");
+      state.kbMap = await invoke("kb_keymap", { layer: state.kbLayer ?? 0 });
+      renderPage();
+      await loadKeymap(state.keymapName ?? state.keymaps?.[0]);
+    });
+    return true;
+  }
+  if ("kbMagnet" in d) { await guarded(t, kbMagnet); return true; }
+  if ("kbMagnetRead" in d) { await guarded(t, kbMagnetRead); return true; }
+  return false;
 }
 
 async function loadKeymap(name) {
@@ -595,14 +885,15 @@ function syncRange(input) {
 
 async function guarded(target, work) {
   target.disabled = true;
-  try { await work(); } catch (error) { setStatus(errorText(error)); show("mouse-output", errorText(error)); } finally { target.disabled = false; }
+  try { await work(); } catch (error) { setStatus(errorText(error)); show("mouse-output", errorText(error)); show("kb-output", errorText(error)); } finally { target.disabled = false; }
 }
 
 export function wireLiveEvents() {
   document.addEventListener("click", async (event) => {
-    const t = event.target.closest("button, [data-mouse-profile]");
+    const t = event.target.closest("button, [data-mouse-profile], .kb-key[data-r]");
     if (!t) return;
     const d = t.dataset;
+    if (await kbHandleClick(t)) return undefined;
     if ("mouseRead" in d) return guarded(t, readMouse);
     if ("mouseApply" in d) {
       return guarded(t, async () => {
@@ -725,6 +1016,10 @@ export function wireLiveEvents() {
 
   document.addEventListener("change", (event) => {
     if (event.target.id === "kb-map") loadKeymap(event.target.value);
+    if (event.target.id === "kb-layer") {
+      state.kbLayer = Number(event.target.value);
+      invoke("kb_keymap", { layer: state.kbLayer }).then((map) => { state.kbMap = map; renderKeyboard(); }).catch((error) => setStatus(errorText(error)));
+    }
     if (event.target.id === "ob-kind") {
       state.obKind = event.target.value;
       document.querySelectorAll("[data-ob]").forEach((el) => { el.hidden = el.dataset.ob !== state.obKind; });
@@ -784,6 +1079,11 @@ export async function loadLivePage(pageId) {
     }
   } else if (pageId === "keyboard") {
     await loadKeyboard();
+    if (!state.kb && !state.kbLoading) {
+      state.kbLoading = true;
+      await readKeyboard();
+      state.kbLoading = false;
+    }
   } else if (pageId === "games") {
     if (!state.gameRules) {
       state.gameRules = await invoke("game_rules_get").catch(() => []);

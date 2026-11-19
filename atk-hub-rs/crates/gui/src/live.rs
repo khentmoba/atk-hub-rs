@@ -9,6 +9,7 @@ use atk_hid::compx::{
     CompxMouse, DpiLight, DpiStage, KeyEvent, MacroPlayback, MouseFunction, MouseSnapshot,
     Performance, ReportRateDpi,
 };
+use atk_hid::keyboard::{self, Keyboard, KeyboardInfo, KeyboardSnapshot};
 use atk_hid::{DeviceInfo, HidTransport};
 use serde_json::{Value, json};
 use std::fs;
@@ -19,6 +20,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Lazily opened mouse driver shared by commands and the game-switch thread.
 pub type SharedMouse = Arc<Mutex<Option<CompxMouse<HidTransport>>>>;
+/// Lazily opened keyboard shared by the keyboard commands.
+pub type SharedKeyboard = Arc<Mutex<Option<Keyboard<HidTransport>>>>;
 
 fn lock_err<T>(_: T) -> String {
     "state lock poisoned".to_owned()
@@ -61,6 +64,128 @@ async fn blocking<R: Send + 'static>(
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|error| error.to_string())?
+}
+
+async fn with_keyboard<R: Send + 'static>(
+    state: &HubState,
+    action: impl FnOnce(&mut Keyboard<HidTransport>) -> Result<R, HidError> + Send + 'static,
+) -> Result<R, String> {
+    let keyboard = Arc::clone(&state.keyboard);
+    blocking(move || {
+        let mut guard = keyboard.lock().map_err(lock_err)?;
+        if guard.is_none() {
+            let (driver, _) = Keyboard::open_first().map_err(|error| error.to_string())?;
+            *guard = Some(driver);
+        }
+        let driver = guard.as_mut().ok_or("keyboard unavailable")?;
+        let result = action(driver);
+        if matches!(result, Err(HidError::Api(_) | HidError::Timeout(_))) {
+            *guard = None;
+        }
+        result.map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn kb_list() -> Result<Vec<KeyboardInfo>, String> {
+    blocking(|| keyboard::list_keyboards().map_err(|error| error.to_string())).await
+}
+
+#[tauri::command]
+pub async fn kb_snapshot(state: State<'_, HubState>) -> Result<KeyboardSnapshot, String> {
+    with_keyboard(&state, Keyboard::snapshot).await
+}
+
+#[tauri::command]
+pub async fn kb_keymap(layer: u8, state: State<'_, HubState>) -> Result<Vec<Vec<u16>>, String> {
+    with_keyboard(&state, move |kb| kb.keymap(layer)).await
+}
+
+#[tauri::command]
+pub async fn kb_set_key(
+    layer: u8,
+    row: u8,
+    col: u8,
+    code: u16,
+    state: State<'_, HubState>,
+) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_keycode(layer, row, col, code)).await
+}
+
+#[tauri::command]
+pub async fn kb_reset_keymap(state: State<'_, HubState>) -> Result<(), String> {
+    with_keyboard(&state, Keyboard::reset_keymap).await
+}
+
+/// Partial keyboard settings; absent fields are untouched.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardPatch {
+    profile: Option<u8>,
+    report_rate: Option<u16>,
+    lighting: Option<keyboard::Lighting>,
+    sleep_secs: Option<u32>,
+    features: Option<keyboard::Features>,
+    game_mode: Option<bool>,
+    dead_zone: Option<[f32; 2]>,
+}
+
+#[tauri::command]
+pub async fn kb_apply(
+    patch: KeyboardPatch,
+    state: State<'_, HubState>,
+) -> Result<KeyboardSnapshot, String> {
+    with_keyboard(&state, move |kb| {
+        if let Some(profile) = patch.profile {
+            kb.set_profile(profile)?;
+        }
+        if let Some(light) = patch.lighting {
+            kb.set_lighting(light)?;
+        }
+        if let Some(secs) = patch.sleep_secs {
+            kb.set_sleep_secs(secs)?;
+        }
+        if let Some(features) = patch.features {
+            kb.set_features(features)?;
+        }
+        if let Some(on) = patch.game_mode {
+            kb.set_game_mode(on)?;
+        }
+        if let Some([top, bottom]) = patch.dead_zone {
+            kb.set_dead_zone(top, bottom)?;
+        }
+        if let Some(hz) = patch.report_rate {
+            kb.set_report_rate(hz)?;
+        }
+        kb.snapshot()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn kb_actuation(state: State<'_, HubState>) -> Result<Vec<f32>, String> {
+    with_keyboard(&state, Keyboard::actuation).await
+}
+
+#[tauri::command]
+pub async fn kb_set_actuation(points: Vec<f32>, state: State<'_, HubState>) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_actuation(&points)).await
+}
+
+#[tauri::command]
+pub async fn kb_rapid_trigger(
+    state: State<'_, HubState>,
+) -> Result<Vec<keyboard::RapidTrigger>, String> {
+    with_keyboard(&state, Keyboard::rapid_trigger).await
+}
+
+#[tauri::command]
+pub async fn kb_set_rapid_trigger(
+    keys: Vec<keyboard::RapidTrigger>,
+    state: State<'_, HubState>,
+) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_rapid_trigger(&keys)).await
 }
 
 #[tauri::command]

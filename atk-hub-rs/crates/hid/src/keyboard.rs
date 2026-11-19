@@ -1,0 +1,861 @@
+//! VIA / BITYUAN magnetic keyboard driver.
+//!
+//! ATK HE keyboards (EDGE, RS, VELOTA ...) expose a VIA raw-HID interface
+//! (usage page `0xFF60`, usage `0x61`) with 32-byte reports on report ID 0.
+//! Byte 0 is the VIA command; vendor settings travel through
+//! `get/set_keyboard_value` with the custom channel `0x96` in byte 1 and a
+//! sub-command in byte 2, exactly as the original `BityuanKeyboardApi`.
+
+use crate::{HidError, HidTransport, Transport, VXE_VENDOR_ID, kb_models::KEYBOARDS};
+use hidapi::HidApi;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// VIA raw-HID usage page.
+pub const USAGE_PAGE: u16 = 0xFF60;
+/// VIA raw-HID usage.
+pub const USAGE: u16 = 0x61;
+const REPORT: usize = 32;
+const CUSTOM: u8 = 150;
+
+mod cmd {
+    pub const PROTOCOL_VERSION: u8 = 1;
+    pub const GET_VALUE: u8 = 2;
+    pub const SET_VALUE: u8 = 3;
+    pub const GET_KEYCODE: u8 = 4;
+    pub const SET_KEYCODE: u8 = 5;
+    pub const KEYMAP_RESET: u8 = 6;
+    pub const LIGHTING_SET: u8 = 7;
+    pub const LIGHTING_GET: u8 = 8;
+    pub const LAYER_COUNT: u8 = 17;
+    pub const GET_BUFFER: u8 = 18;
+}
+
+mod sub {
+    pub const BUFFER_TRAVEL: u8 = 13;
+    pub const BUFFER_RT: u8 = 14;
+    pub const DEAD_BAND: u8 = 11;
+    pub const LIGHT_INFO: u8 = 65;
+    pub const FEATURE: u8 = 17;
+    pub const GAME_MODE: u8 = 30;
+    pub const PROFILE: u8 = 35;
+    pub const TRAVEL: u8 = 36;
+    pub const LIGHT_OFF: u8 = 38;
+    pub const REPORT_RATE: u8 = 70;
+    pub const RESTART: u8 = 78;
+}
+
+/// Flash operation flag of chunked travel / rapid-trigger writes.
+const FLASH_NORMAL: u8 = 0;
+const FLASH_ERASE: u8 = 1;
+const FLASH_WRITE: u8 = 2;
+
+/// A known keyboard model.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardModel {
+    /// Marketing name.
+    pub name: String,
+    /// Dynamic keymap layers.
+    pub layers: u8,
+    /// Switch-matrix rows.
+    pub rows: u8,
+    /// Switch-matrix columns.
+    pub cols: u8,
+}
+
+/// Looks up a model by vendor and product ID.
+#[must_use]
+pub fn model(vendor_id: u16, product_id: u16) -> Option<KeyboardModel> {
+    KEYBOARDS
+        .iter()
+        .find(|(vid, pid, ..)| *vid == vendor_id && *pid == product_id)
+        .map(|(_, _, layers, rows, cols, name)| KeyboardModel {
+            name: (*name).to_owned(),
+            layers: *layers,
+            rows: *rows,
+            cols: *cols,
+        })
+}
+
+/// A connected keyboard configuration interface.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardInfo {
+    /// OS device path.
+    pub path: String,
+    /// Vendor ID.
+    pub vendor_id: u16,
+    /// Product ID.
+    pub product_id: u16,
+    /// Product string reported by the device.
+    pub product: String,
+    /// Known model, when the product is in the registry.
+    pub model: Option<KeyboardModel>,
+}
+
+/// Lists connected VIA keyboards; ATK models first.
+///
+/// # Errors
+///
+/// Returns an error when hidapi cannot initialise.
+pub fn list_keyboards() -> Result<Vec<KeyboardInfo>, HidError> {
+    let api = HidApi::new()?;
+    let mut list: Vec<KeyboardInfo> = api
+        .device_list()
+        .filter(|info| info.usage_page() == USAGE_PAGE && info.usage() == USAGE)
+        .map(|info| KeyboardInfo {
+            path: info.path().to_string_lossy().into_owned(),
+            vendor_id: info.vendor_id(),
+            product_id: info.product_id(),
+            product: info.product_string().unwrap_or("Keyboard").to_owned(),
+            model: model(info.vendor_id(), info.product_id()),
+        })
+        .collect();
+    list.dedup_by(|a, b| a.path == b.path);
+    list.sort_by_key(|info| (info.model.is_none(), info.vendor_id != VXE_VENDOR_ID));
+    Ok(list)
+}
+
+/// Main backlight settings (`lightInfo`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lighting {
+    /// Effect index.
+    pub mode: u8,
+    /// Effect speed (0-255).
+    pub speed: u8,
+    /// Brightness (0-100).
+    pub brightness: u8,
+    /// Colour.
+    pub color: [u8; 3],
+    /// Rainbow colours instead of `color`.
+    pub colorful: u8,
+}
+
+/// Toggle features (`feature` sub-command).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Features {
+    /// Lighting area selection.
+    pub rgb_area: u8,
+    /// Swap WASD with the arrow keys.
+    pub wasd_swap: u8,
+    /// macOS layout.
+    pub mac: u8,
+    /// Windows-key lock.
+    pub win_lock: u8,
+    /// Six-key rollover / anti-ghosting flag.
+    pub six_key: u8,
+}
+
+/// Switch travel limits reported by the firmware, in millimetres.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TravelInfo {
+    /// Deepest actuation point.
+    pub travel_max: f32,
+    /// Shallowest actuation point.
+    pub travel_min: f32,
+    /// Actuation step.
+    pub travel_step: f32,
+    /// Largest rapid-trigger sensitivity.
+    pub rt_max: f32,
+    /// Smallest rapid-trigger sensitivity.
+    pub rt_min: f32,
+    /// Rapid-trigger step.
+    pub rt_step: f32,
+}
+
+/// Rapid-trigger settings of one key.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RapidTrigger {
+    /// Rapid trigger enabled.
+    pub on: bool,
+    /// Press sensitivity in millimetres.
+    pub press: f32,
+    /// Release sensitivity in millimetres.
+    pub release: f32,
+}
+
+/// Everything the keyboard page shows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyboardSnapshot {
+    /// Model (registry entry or generic VIA geometry).
+    pub model: KeyboardModel,
+    /// VIA protocol version.
+    pub protocol: u16,
+    /// Firmware version, e.g. `1.05`.
+    pub version: String,
+    /// Active onboard profile (0-3).
+    pub profile: u8,
+    /// Polling rate in Hz.
+    pub report_rate: u16,
+    /// Backlight.
+    pub lighting: Lighting,
+    /// Backlight sleep timeout in seconds; 0 = never.
+    pub sleep_secs: u32,
+    /// Toggle features.
+    pub features: Features,
+    /// Performance (game) mode.
+    pub game_mode: u8,
+    /// Top / bottom dead zones in millimetres.
+    pub dead_zone: [f32; 2],
+    /// Firmware travel limits.
+    pub travel: TravelInfo,
+}
+
+fn mm(raw: u16) -> f32 {
+    f32::from(raw) / 1000.0
+}
+
+fn raw_mm(value: f32) -> u16 {
+    (value.max(0.0) * 1000.0).round().min(f32::from(u16::MAX)) as u16
+}
+
+fn be(bytes: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes([
+        bytes.get(at).copied().unwrap_or(0),
+        bytes.get(at + 1).copied().unwrap_or(0),
+    ])
+}
+
+/// Report-rate code used by the firmware.
+fn rate_code(hz: u16) -> Result<u8, HidError> {
+    Ok(match hz {
+        1000 => 3,
+        2000 => 2,
+        4000 => 1,
+        8000 => 0,
+        _ => {
+            return Err(HidError::Invalid(format!(
+                "unsupported polling rate {hz} Hz"
+            )));
+        }
+    })
+}
+
+fn rate_hz(code: u8) -> u16 {
+    match code {
+        0 => 8000,
+        1 => 4000,
+        2 => 2000,
+        _ => 1000,
+    }
+}
+
+/// Splits per-key records into the chunked flash writes the firmware expects.
+fn flash_chunks(records: &[u8], keys_per_chunk: usize, record: usize) -> Vec<(u16, u8, Vec<u8>)> {
+    let chunks: Vec<&[u8]> = records.chunks(keys_per_chunk * record).collect();
+    let last = chunks.len().saturating_sub(1);
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let op = if index == last {
+                FLASH_WRITE
+            } else if index == 0 {
+                FLASH_ERASE
+            } else {
+                FLASH_NORMAL
+            };
+            let offset = u16::try_from(index * keys_per_chunk).unwrap_or(u16::MAX);
+            (offset, op, chunk.to_vec())
+        })
+        .collect()
+}
+
+/// A VIA / BITYUAN keyboard.
+#[derive(Debug)]
+pub struct Keyboard<T: Transport> {
+    transport: T,
+    model: KeyboardModel,
+}
+
+impl Keyboard<HidTransport> {
+    /// Opens the first connected VIA keyboard.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HidError::NotFound`] when none is connected.
+    pub fn open_first() -> Result<(Self, KeyboardInfo), HidError> {
+        let info = list_keyboards()?
+            .into_iter()
+            .next()
+            .ok_or(HidError::NotFound)?;
+        let mut transport = HidTransport::open(&info.path)?;
+        transport.set_timeout(Duration::from_millis(3000));
+        let mut keyboard = Self::new(transport, info.model.clone());
+        if info.model.is_none() {
+            keyboard.model.name.clone_from(&info.product);
+        }
+        Ok((keyboard, info))
+    }
+}
+
+impl<T: Transport> Keyboard<T> {
+    /// Wraps a transport. Unknown models use VIA's layer count and a full
+    /// 6 x 21 matrix.
+    pub fn new(transport: T, model: Option<KeyboardModel>) -> Self {
+        Self {
+            transport,
+            model: model.unwrap_or(KeyboardModel {
+                name: "VIA Keyboard".into(),
+                layers: 4,
+                rows: 6,
+                cols: 21,
+            }),
+        }
+    }
+
+    /// The model geometry in use.
+    #[must_use]
+    pub fn model(&self) -> &KeyboardModel {
+        &self.model
+    }
+
+    fn request(&mut self, bytes: &[u8]) -> Result<Vec<u8>, HidError> {
+        let mut report = [0_u8; REPORT];
+        report[..bytes.len()].copy_from_slice(bytes);
+        let echo: Vec<u8> = if matches!(bytes[0], cmd::GET_VALUE | cmd::SET_VALUE) {
+            bytes[..bytes.len().min(3)].to_vec()
+        } else {
+            bytes[..1].to_vec()
+        };
+        let reply = self
+            .transport
+            .transfer_where(0, &report, &|reply: &[u8]| reply.starts_with(&echo))?;
+        if reply.first() == Some(&0xFF) {
+            return Err(HidError::Invalid(format!(
+                "keyboard rejected command {}",
+                bytes[0]
+            )));
+        }
+        Ok(reply)
+    }
+
+    fn get(&mut self, sub: u8, extra: &[u8]) -> Result<Vec<u8>, HidError> {
+        let mut bytes = vec![cmd::GET_VALUE, CUSTOM, sub];
+        bytes.extend_from_slice(extra);
+        self.request(&bytes)
+    }
+
+    fn set(&mut self, sub: u8, extra: &[u8]) -> Result<(), HidError> {
+        let mut bytes = vec![cmd::SET_VALUE, CUSTOM, sub];
+        bytes.extend_from_slice(extra);
+        self.request(&bytes).map(drop)
+    }
+
+    /// Reads the VIA protocol version.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn protocol_version(&mut self) -> Result<u16, HidError> {
+        Ok(be(&self.request(&[cmd::PROTOCOL_VERSION])?, 1))
+    }
+
+    /// Reads the firmware version (`major.minor`, hex digits).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn version(&mut self) -> Result<String, HidError> {
+        let reply = self.request(&[cmd::GET_VALUE, CUSTOM])?;
+        Ok(format!(
+            "{:x}.{:02x}",
+            reply.get(5).copied().unwrap_or(0),
+            reply.get(6).copied().unwrap_or(0)
+        ))
+    }
+
+    /// Reads the number of dynamic keymap layers and updates the model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn layer_count(&mut self) -> Result<u8, HidError> {
+        let reply = self.request(&[cmd::LAYER_COUNT])?;
+        let layers = reply.get(1).copied().filter(|n| (1..=16).contains(n));
+        if let Some(layers) = layers {
+            self.model.layers = layers;
+        }
+        Ok(self.model.layers)
+    }
+
+    /// Reads one keycode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn keycode(&mut self, layer: u8, row: u8, col: u8) -> Result<u16, HidError> {
+        Ok(be(&self.request(&[cmd::GET_KEYCODE, layer, row, col])?, 4))
+    }
+
+    /// Remaps one key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_keycode(&mut self, layer: u8, row: u8, col: u8, code: u16) -> Result<(), HidError> {
+        let [hi, lo] = code.to_be_bytes();
+        self.request(&[cmd::SET_KEYCODE, layer, row, col, hi, lo])
+            .map(drop)
+    }
+
+    /// Reads a whole layer as `rows x cols` keycodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-layer or transport error.
+    pub fn keymap(&mut self, layer: u8) -> Result<Vec<Vec<u16>>, HidError> {
+        if layer >= self.model.layers {
+            return Err(HidError::Invalid(format!("layer {layer}")));
+        }
+        let (rows, cols) = (usize::from(self.model.rows), usize::from(self.model.cols));
+        let size = rows * cols * 2;
+        let start = usize::from(layer) * size;
+        let mut bytes = Vec::with_capacity(size);
+        while bytes.len() < size {
+            let len = (size - bytes.len()).min(28);
+            let offset = u16::try_from(start + bytes.len())
+                .map_err(|_| HidError::Invalid("keymap too large".into()))?;
+            let [hi, lo] = offset.to_be_bytes();
+            let reply = self.request(&[cmd::GET_BUFFER, hi, lo, len as u8])?;
+            bytes.extend((0..len).map(|index| reply.get(4 + index).copied().unwrap_or(0)));
+        }
+        Ok(bytes
+            .chunks(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>()
+            .chunks(cols)
+            .map(<[u16]>::to_vec)
+            .collect())
+    }
+
+    /// Restores the factory keymap.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn reset_keymap(&mut self) -> Result<(), HidError> {
+        self.request(&[cmd::KEYMAP_RESET]).map(drop)
+    }
+
+    /// Reads the main backlight.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn lighting(&mut self) -> Result<Lighting, HidError> {
+        let r = self.request(&[cmd::LIGHTING_GET, sub::LIGHT_INFO])?;
+        let at = |index: usize| r.get(index).copied().unwrap_or(0);
+        Ok(Lighting {
+            mode: at(2),
+            speed: at(4),
+            color: [at(5), at(6), at(7)],
+            brightness: at(8),
+            colorful: at(9),
+        })
+    }
+
+    /// Writes the main backlight.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_lighting(&mut self, light: Lighting) -> Result<(), HidError> {
+        let [r, g, b] = light.color;
+        self.request(&[
+            cmd::LIGHTING_SET,
+            sub::LIGHT_INFO,
+            light.mode,
+            0,
+            light.speed,
+            r,
+            g,
+            b,
+            light.brightness,
+            light.colorful,
+        ])
+        .map(drop)
+    }
+
+    /// Backlight sleep timeout in seconds (0 = never).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn sleep_secs(&mut self) -> Result<u32, HidError> {
+        let minutes = self.get(sub::LIGHT_OFF, &[])?.get(3).copied().unwrap_or(0);
+        Ok(u32::from(minutes) * 60)
+    }
+
+    /// Sets the backlight sleep timeout in seconds (0 = never).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_sleep_secs(&mut self, secs: u32) -> Result<(), HidError> {
+        let minutes = u8::try_from(secs / 60).unwrap_or(u8::MAX);
+        self.set(sub::LIGHT_OFF, &[minutes])
+    }
+
+    /// Active onboard profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn profile(&mut self) -> Result<u8, HidError> {
+        Ok(self.get(sub::PROFILE, &[])?.get(3).copied().unwrap_or(0))
+    }
+
+    /// Switches the onboard profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_profile(&mut self, profile: u8) -> Result<(), HidError> {
+        self.set(sub::PROFILE, &[profile.min(3)])
+    }
+
+    /// Polling rate in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn report_rate(&mut self) -> Result<u16, HidError> {
+        Ok(rate_hz(
+            self.get(sub::REPORT_RATE, &[])?
+                .get(3)
+                .copied()
+                .unwrap_or(3),
+        ))
+    }
+
+    /// Sets the polling rate (1000/2000/4000/8000 Hz).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-rate or transport error.
+    pub fn set_report_rate(&mut self, hz: u16) -> Result<(), HidError> {
+        let code = rate_code(hz)?;
+        self.set(sub::RESTART, &[1])?;
+        self.set(sub::REPORT_RATE, &[code])
+    }
+
+    /// Toggle features.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn features(&mut self) -> Result<Features, HidError> {
+        let r = self.get(sub::FEATURE, &[])?;
+        let at = |index: usize| r.get(index).copied().unwrap_or(0);
+        Ok(Features {
+            rgb_area: at(3),
+            wasd_swap: at(4),
+            mac: at(5),
+            win_lock: at(6),
+            six_key: at(7),
+        })
+    }
+
+    /// Writes the toggle features.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_features(&mut self, f: Features) -> Result<(), HidError> {
+        self.set(
+            sub::FEATURE,
+            &[f.rgb_area, f.wasd_swap, f.mac, f.win_lock, f.six_key],
+        )
+    }
+
+    /// Performance (game) mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn game_mode(&mut self) -> Result<u8, HidError> {
+        Ok(self.get(sub::GAME_MODE, &[])?.get(3).copied().unwrap_or(0))
+    }
+
+    /// Sets performance (game) mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_game_mode(&mut self, on: bool) -> Result<(), HidError> {
+        self.set(sub::GAME_MODE, &[u8::from(on)])
+    }
+
+    /// Top and bottom dead zones in millimetres.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn dead_zone(&mut self) -> Result<[f32; 2], HidError> {
+        let r = self.get(sub::DEAD_BAND, &[])?;
+        Ok([mm(be(&r, 3)), mm(be(&r, 5))])
+    }
+
+    /// Sets the top and bottom dead zones in millimetres.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_dead_zone(&mut self, top: f32, bottom: f32) -> Result<(), HidError> {
+        let [th, tl] = raw_mm(top).to_be_bytes();
+        let [bh, bl] = raw_mm(bottom).to_be_bytes();
+        self.set(sub::DEAD_BAND, &[th, tl, bh, bl])
+    }
+
+    /// Firmware travel limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn travel_info(&mut self) -> Result<TravelInfo, HidError> {
+        let r = self.get(sub::TRAVEL, &[])?;
+        Ok(TravelInfo {
+            travel_max: mm(be(&r, 3)),
+            travel_min: mm(be(&r, 5)),
+            travel_step: mm(be(&r, 7)),
+            rt_max: mm(be(&r, 9)),
+            rt_min: mm(be(&r, 11)),
+            rt_step: mm(be(&r, 13)),
+        })
+    }
+
+    fn key_count(&self) -> usize {
+        usize::from(self.model.rows) * usize::from(self.model.cols)
+    }
+
+    fn read_buffer(&mut self, sub: u8, per: usize, record: usize) -> Result<Vec<u8>, HidError> {
+        let keys = self.key_count();
+        let mut out = Vec::with_capacity(keys * record);
+        for chunk in 0..keys.div_ceil(per) {
+            let [hi, lo] = u16::try_from(chunk * per).unwrap_or(0).to_be_bytes();
+            let reply = self.get(sub, &[0, 0, hi, lo, per as u8])?;
+            out.extend((0..per * record).map(|index| reply.get(8 + index).copied().unwrap_or(0)));
+        }
+        out.truncate(keys * record);
+        Ok(out)
+    }
+
+    fn write_buffer(
+        &mut self,
+        sub: u8,
+        records: &[u8],
+        per: usize,
+        record: usize,
+    ) -> Result<(), HidError> {
+        let chunks = flash_chunks(records, per, record);
+        let last = chunks.len().saturating_sub(1);
+        for (index, (offset, op, data)) in chunks.into_iter().enumerate() {
+            let [hi, lo] = offset.to_be_bytes();
+            let mut extra = vec![0, 0, hi, lo, per as u8, op];
+            extra.extend(data);
+            self.set(sub, &extra)?;
+            if index == 0 || index == last {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+        Ok(())
+    }
+
+    /// Actuation point of every key, row-major, in millimetres.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn actuation(&mut self) -> Result<Vec<f32>, HidError> {
+        let bytes = self.read_buffer(sub::BUFFER_TRAVEL, 12, 2)?;
+        Ok(bytes.chunks(2).map(|pair| mm(be(pair, 0))).collect())
+    }
+
+    /// Writes the actuation point of every key (row-major, millimetres).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-length or transport error.
+    pub fn set_actuation(&mut self, points: &[f32]) -> Result<(), HidError> {
+        if points.len() != self.key_count() {
+            return Err(HidError::Invalid(format!(
+                "expected {} actuation points",
+                self.key_count()
+            )));
+        }
+        let records: Vec<u8> = points
+            .iter()
+            .flat_map(|point| raw_mm(*point).to_be_bytes())
+            .collect();
+        self.write_buffer(sub::BUFFER_TRAVEL, &records, 11, 2)
+    }
+
+    /// Rapid-trigger settings of every key, row-major.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn rapid_trigger(&mut self) -> Result<Vec<RapidTrigger>, HidError> {
+        let bytes = self.read_buffer(sub::BUFFER_RT, 4, 5)?;
+        Ok(bytes
+            .chunks(5)
+            .map(|r| RapidTrigger {
+                on: r[0] != 0,
+                release: mm(be(r, 1)),
+                press: mm(be(r, 3)),
+            })
+            .collect())
+    }
+
+    /// Writes the rapid-trigger settings of every key (row-major).
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-length or transport error.
+    pub fn set_rapid_trigger(&mut self, keys: &[RapidTrigger]) -> Result<(), HidError> {
+        if keys.len() != self.key_count() {
+            return Err(HidError::Invalid(format!(
+                "expected {} rapid-trigger entries",
+                self.key_count()
+            )));
+        }
+        let records: Vec<u8> = keys
+            .iter()
+            .flat_map(|key| {
+                let [rh, rl] = raw_mm(key.release).to_be_bytes();
+                let [ph, pl] = raw_mm(key.press).to_be_bytes();
+                [u8::from(key.on), rh, rl, ph, pl]
+            })
+            .collect();
+        self.write_buffer(sub::BUFFER_RT, &records, 4, 5)
+    }
+
+    /// Reads everything the keyboard page shows. Optional vendor settings
+    /// that a firmware does not implement fall back to defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error when the keyboard does not answer at all.
+    pub fn snapshot(&mut self) -> Result<KeyboardSnapshot, HidError> {
+        let protocol = self.protocol_version()?;
+        let _ = self.layer_count();
+        Ok(KeyboardSnapshot {
+            protocol,
+            version: self.version().unwrap_or_default(),
+            profile: self.profile().unwrap_or(0),
+            report_rate: self.report_rate().unwrap_or(1000),
+            lighting: self.lighting().unwrap_or_default(),
+            sleep_secs: self.sleep_secs().unwrap_or(0),
+            features: self.features().unwrap_or_default(),
+            game_mode: self.game_mode().unwrap_or(0),
+            dead_zone: self.dead_zone().unwrap_or([0.0, 0.0]),
+            travel: self.travel_info().unwrap_or_default(),
+            model: self.model.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    #[derive(Default)]
+    struct Fake {
+        sent: Vec<Vec<u8>>,
+        replies: VecDeque<Vec<u8>>,
+    }
+
+    impl Transport for Fake {
+        fn transfer(&mut self, _: u8, data: &[u8], _: u8) -> Result<Vec<u8>, HidError> {
+            self.sent.push(data.to_vec());
+            Ok(self.replies.pop_front().unwrap_or_else(|| data.to_vec()))
+        }
+    }
+
+    fn keyboard(rows: u8, cols: u8) -> Keyboard<Fake> {
+        Keyboard::new(
+            Fake::default(),
+            Some(KeyboardModel {
+                name: "test".into(),
+                layers: 2,
+                rows,
+                cols,
+            }),
+        )
+    }
+
+    #[test]
+    fn registry_knows_edge60() {
+        let model = model(0x373b, 0x1082).unwrap();
+        assert_eq!((model.layers, model.rows, model.cols), (4, 5, 14));
+    }
+
+    #[test]
+    fn set_keycode_and_lighting_frames() {
+        let mut kb = keyboard(1, 2);
+        kb.set_keycode(1, 2, 3, 0x5220).unwrap();
+        kb.set_lighting(Lighting {
+            mode: 4,
+            speed: 2,
+            brightness: 3,
+            color: [1, 2, 3],
+            colorful: 1,
+        })
+        .unwrap();
+        kb.set_report_rate(8000).unwrap();
+        let sent = &kb.transport.sent;
+        assert_eq!(&sent[0][..6], &[5, 1, 2, 3, 0x52, 0x20]);
+        assert_eq!(&sent[1][..10], &[7, 65, 4, 0, 2, 1, 2, 3, 3, 1]);
+        assert_eq!(&sent[2][..4], &[3, 150, 78, 1]);
+        assert_eq!(&sent[3][..4], &[3, 150, 70, 0]);
+        assert!(sent.iter().all(|frame| frame.len() == 32));
+    }
+
+    #[test]
+    fn keymap_reads_buffer_in_chunks() {
+        let mut kb = keyboard(1, 2);
+        let mut reply = vec![18, 0, 4, 4, 0, 4, 0x52, 0x20];
+        reply.resize(32, 0);
+        kb.transport.replies.push_back(reply);
+        assert_eq!(kb.keymap(1).unwrap(), vec![vec![4, 0x5220]]);
+        assert_eq!(&kb.transport.sent[0][..4], &[18, 0, 4, 4]);
+    }
+
+    #[test]
+    fn actuation_write_uses_erase_then_write_chunks() {
+        let mut kb = keyboard(2, 12);
+        kb.set_actuation(&[1.2; 24]).unwrap();
+        let sent = &kb.transport.sent;
+        assert_eq!(sent.len(), 3);
+        assert_eq!(&sent[0][..9], &[3, 150, 13, 0, 0, 0, 0, 11, FLASH_ERASE]);
+        assert_eq!(&sent[0][9..11], &1200_u16.to_be_bytes());
+        assert_eq!(&sent[1][5..9], &[0, 11, 11, FLASH_NORMAL]);
+        assert_eq!(&sent[2][5..9], &[0, 22, 11, FLASH_WRITE]);
+        assert!(kb.set_actuation(&[1.0; 3]).is_err());
+    }
+
+    #[test]
+    fn rapid_trigger_round_trip_records() {
+        let mut kb = keyboard(1, 1);
+        let mut reply = vec![2, 150, 14, 0, 0, 0, 0, 4, 1, 0, 100, 0, 200];
+        reply.resize(32, 0);
+        kb.transport.replies.push_back(reply);
+        let keys = kb.rapid_trigger().unwrap();
+        assert_eq!(
+            keys,
+            vec![RapidTrigger {
+                on: true,
+                release: 0.1,
+                press: 0.2
+            }]
+        );
+    }
+}

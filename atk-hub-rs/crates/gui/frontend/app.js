@@ -1024,6 +1024,16 @@ function previewResponse(command, args) {
     system_mouse_get: { speed: 10, wheelLines: 3 },
     game_rules_get: [{ exe: "cs2.exe", profile: 1 }],
     keymap_load: { name: "ATK68", layouts: { keymap: [[{ index: [0, 0], defaultKey: { 0: [0, 41] } }, { index: [0, 1], defaultKey: { 0: [0, 30] } }, { index: [0, 2], w: 2, defaultKey: { 0: [0, 42] } }]] } },
+    kb_snapshot: {
+      model: { name: "EDGE 60HE ULTIMATE", layers: 4, rows: 5, cols: 14 }, protocol: 12, version: "1.05", profile: 0, reportRate: 8000,
+      lighting: { mode: 4, speed: 128, brightness: 80, color: [0, 170, 255], colorful: 0 }, sleepSecs: 300,
+      features: { rgbArea: 0, wasdSwap: 0, mac: 0, winLock: 0, sixKey: 0 }, gameMode: 1, deadZone: [0.1, 0.1],
+      travel: { travelMax: 3.4, travelMin: 0.1, travelStep: 0.01, rtMax: 2, rtMin: 0.01, rtStep: 0.01 },
+    },
+    kb_keymap: [[41, 30, 42], [43, 20, 26]],
+    get kb_apply() { return this.kb_snapshot; },
+    kb_actuation: Array(70).fill(1.2),
+    kb_rapid_trigger: Array(70).fill({ on: false, press: 0.1, release: 0.1 }),
     mouse_snapshot: {
       name: "VXE R1 PRO MAX", cid: 2, mid: 28, sensor: "Paw3395", maxDpi: 26000, version: "1.21", dongleVersion: "1.08",
       online: true, battery: 80, charging: false, profile: 0,
