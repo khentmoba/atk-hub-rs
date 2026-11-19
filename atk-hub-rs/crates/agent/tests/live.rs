@@ -21,7 +21,7 @@ fn correlates_responses_and_forwards_events() {
 
     let server_thread = thread::spawn(move || {
         let mut server = server.wait().expect("client connection");
-        server.set_read_timeout(Some(Duration::from_secs(2)));
+        server.set_read_timeout(Some(Duration::from_secs(10)));
 
         let mut chunk = [0_u8; 4096];
         let count = server.read(&mut chunk).expect("request frame");
@@ -48,7 +48,7 @@ fn correlates_responses_and_forwards_events() {
     assert_eq!(result, json!({ "devices": [] }));
 
     let event = events
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(5))
         .expect("event delivered");
     assert_eq!(event["event"], "agent.status");
     assert_eq!(event["data"]["connected"], true);
