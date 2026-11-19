@@ -123,6 +123,45 @@ pub async fn kb_reset_keymap(state: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn kb_advanced_keys(state: State<'_, HubState>) -> Result<Value, String> {
+    with_keyboard(&state, |kb| {
+        let slots = keyboard::ADVANCED_SLOTS;
+        let dks: Vec<_> = (0..slots).map(|i| kb.dks(i).ok()).collect();
+        let advanced: Vec<_> = (0..slots).map(|i| kb.advanced_key(i).ok()).collect();
+        let tap_dance: Vec<_> = (0..slots * 2).map(|i| kb.tap_dance(i).ok()).collect();
+        Ok(json!({ "dks": dks, "advanced": advanced, "tapDance": tap_dance }))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn kb_set_dks(
+    state: State<'_, HubState>,
+    index: u8,
+    slot: keyboard::DksSlot,
+) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_dks(index, &slot)).await
+}
+
+#[tauri::command]
+pub async fn kb_set_advanced_key(
+    state: State<'_, HubState>,
+    index: u8,
+    key: keyboard::AdvancedKey,
+) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_advanced_key(index, &key)).await
+}
+
+#[tauri::command]
+pub async fn kb_set_tap_dance(
+    state: State<'_, HubState>,
+    index: u8,
+    slot: keyboard::TapDance,
+) -> Result<(), String> {
+    with_keyboard(&state, move |kb| kb.set_tap_dance(index, &slot)).await
+}
+
+#[tauri::command]
 pub async fn kb_macros(state: State<'_, HubState>) -> Result<Vec<keyboard::KeyboardMacro>, String> {
     with_keyboard(&state, Keyboard::macros).await
 }

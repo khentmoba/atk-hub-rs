@@ -47,6 +47,170 @@ mod sub {
     pub const REPORT_RATE: u8 = 70;
     pub const RESTART: u8 = 78;
     pub const MACRO: u8 = 77;
+    pub const DKS: u8 = 15;
+    pub const ADVANCED: u8 = 32;
+}
+
+/// Vial prefix command carrying tap-dance (MT/TGL) slots.
+const VIAL_PREFIX: u8 = 254;
+const ENTRY_OP: u8 = 13;
+const TAP_DANCE_GET: u8 = 1;
+const TAP_DANCE_SET: u8 = 2;
+const SLOT_GET: u8 = 1;
+const SLOT_SET: u8 = 3;
+
+/// Advanced-key slots per kind on BITYUAN magnetic keyboards.
+pub const ADVANCED_SLOTS: u8 = 20;
+/// Keycode base that points a key at DKS slot `n` (`0x7E05 + n`).
+pub const DKS_KEYCODE: u16 = 0x7E05;
+/// Keycode base that points a key at MT slot `n` (`0x5700 + n`).
+pub const MT_KEYCODE: u16 = 0x5700;
+/// Keycode base that points a key at TGL slot `n` (`0x5714 + n`).
+pub const TGL_KEYCODE: u16 = 0x5714;
+
+/// One of the four DKS bindings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DksAction {
+    /// 10-bit stage mask: bits 0, 3, 6, 9 fire at press, bottom, lift and
+    /// release; bits between two stages keep the key held across them.
+    pub status: u16,
+    /// Keycode sent.
+    pub code: u16,
+}
+
+/// A dynamic keystroke slot.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DksSlot {
+    /// Four bindings.
+    pub actions: Vec<DksAction>,
+    /// Upper trigger point in millimetres.
+    pub top: f32,
+    /// Lower trigger point in millimetres.
+    pub bottom: f32,
+}
+
+/// Rapid snap / SOCD / OKS / AKS slot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdvancedKey {
+    /// 0 none, 1 RS, 2 SOCD last input, 3 SOCD key 1, 4 SOCD key 2,
+    /// 5 SOCD neutral, 6 OKS, 7 AKS key 1, 8 AKS key 2, 9 AKS balance.
+    pub mode: u8,
+    /// Trigger point in millimetres.
+    pub point: f32,
+    /// Follow the global trigger instead of `point`.
+    pub with_global: bool,
+    /// Rapid trigger enabled.
+    pub rt: bool,
+    /// First key position.
+    pub key1: [u8; 2],
+    /// Second key position.
+    pub key2: [u8; 2],
+    /// Layer.
+    pub layer: u8,
+    /// AKS trigger delay in milliseconds.
+    pub trigger_delay: u16,
+    /// AKS key delay in milliseconds.
+    pub key_delay: u16,
+    /// AKS randomness percent.
+    pub random: u8,
+    /// AKS trigger switch.
+    pub trigger_switch: u8,
+}
+
+/// Mod-tap or toggle slot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TapDance {
+    /// Keycode on tap (or the toggled key for TGL).
+    pub tap: u16,
+    /// Keycode while held (MT only).
+    pub hold: u16,
+    /// Hold threshold in milliseconds.
+    pub delay: u16,
+}
+
+fn word(bytes: &[u8], index: usize) -> u16 {
+    u16::from_be_bytes([
+        bytes.get(index).copied().unwrap_or(0),
+        bytes.get(index + 1).copied().unwrap_or(0),
+    ])
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn micrometres(mm: f32) -> [u8; 2] {
+    ((mm * 1000.0).round().clamp(0.0, 65535.0) as u16).to_be_bytes()
+}
+
+/// Encodes the payload after `[cmd, 150, 15]` for a DKS write.
+#[must_use]
+pub fn encode_dks(index: u8, slot: &DksSlot) -> Vec<u8> {
+    let mut out = vec![0, 0, SLOT_SET, index];
+    for n in 0..4 {
+        let action = slot.actions.get(n).copied().unwrap_or_default();
+        out.extend_from_slice(&(action.status & 0x3FF).to_be_bytes());
+        out.extend_from_slice(&action.code.to_be_bytes());
+    }
+    let (top, bottom) = (slot.top.min(slot.bottom), slot.top.max(slot.bottom));
+    out.extend_from_slice(&micrometres(top));
+    out.extend_from_slice(&micrometres(bottom));
+    out
+}
+
+/// Decodes a DKS reply (including the `[cmd, 150, 15]` echo).
+#[must_use]
+pub fn decode_dks(reply: &[u8]) -> DksSlot {
+    DksSlot {
+        actions: (0..4)
+            .map(|n| DksAction {
+                status: word(reply, 7 + 4 * n) & 0x3FF,
+                code: word(reply, 9 + 4 * n),
+            })
+            .collect(),
+        top: f32::from(word(reply, 23)) / 1000.0,
+        bottom: f32::from(word(reply, 25)) / 1000.0,
+    }
+}
+
+/// Encodes the payload after `[cmd, 150, 32]` for an advanced-key write.
+#[must_use]
+pub fn encode_advanced(index: u8, key: &AdvancedKey) -> Vec<u8> {
+    let mut out = vec![0, 0, SLOT_SET, index, key.mode, index % 26];
+    out.extend_from_slice(&micrometres(key.point));
+    out.extend_from_slice(&[
+        u8::from(key.with_global),
+        u8::from(key.rt),
+        key.key1[0],
+        key.key1[1],
+        key.key2[0],
+        key.key2[1],
+        key.layer,
+    ]);
+    out.extend_from_slice(&key.trigger_delay.to_be_bytes());
+    out.extend_from_slice(&key.key_delay.to_be_bytes());
+    out.extend_from_slice(&[key.random, key.trigger_switch]);
+    out
+}
+
+/// Decodes an advanced-key reply (including the `[cmd, 150, 32]` echo).
+#[must_use]
+pub fn decode_advanced(reply: &[u8]) -> AdvancedKey {
+    let at = |index: usize| reply.get(index).copied().unwrap_or(0);
+    AdvancedKey {
+        mode: at(7),
+        point: f32::from(word(reply, 9)) / 1000.0,
+        with_global: at(11) != 0,
+        rt: at(12) != 0,
+        key1: [at(13), at(14)],
+        key2: [at(15), at(16)],
+        layer: at(17),
+        trigger_delay: word(reply, 18),
+        key_delay: word(reply, 20),
+        random: at(22),
+        trigger_switch: at(23),
+    }
 }
 
 /// Onboard macro slots on BITYUAN keyboards.
@@ -557,6 +721,73 @@ impl<T: Transport> Keyboard<T> {
         self.request(&[cmd::KEYMAP_RESET]).map(drop)
     }
 
+    /// Reads a dynamic keystroke slot (0-19).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn dks(&mut self, index: u8) -> Result<DksSlot, HidError> {
+        Ok(decode_dks(&self.get(sub::DKS, &[0, 0, SLOT_GET, index])?))
+    }
+
+    /// Writes a dynamic keystroke slot. Point a key at it with
+    /// [`DKS_KEYCODE`] `+ index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_dks(&mut self, index: u8, slot: &DksSlot) -> Result<(), HidError> {
+        self.set(sub::DKS, &encode_dks(index, slot))
+    }
+
+    /// Reads a rapid snap / SOCD / OKS / AKS slot (0-19).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn advanced_key(&mut self, index: u8) -> Result<AdvancedKey, HidError> {
+        Ok(decode_advanced(
+            &self.get(sub::ADVANCED, &[0, 0, SLOT_GET, index])?,
+        ))
+    }
+
+    /// Writes a rapid snap / SOCD / OKS / AKS slot; mode 0 clears it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_advanced_key(&mut self, index: u8, key: &AdvancedKey) -> Result<(), HidError> {
+        self.set(sub::ADVANCED, &encode_advanced(index, key))
+    }
+
+    /// Reads a tap-dance slot: 0-19 are mod-tap, 20-39 toggle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn tap_dance(&mut self, index: u8) -> Result<TapDance, HidError> {
+        let reply = self.request(&[VIAL_PREFIX, ENTRY_OP, TAP_DANCE_GET, index])?;
+        Ok(TapDance {
+            tap: word(&reply, 4),
+            hold: word(&reply, 6),
+            delay: word(&reply, 8),
+        })
+    }
+
+    /// Writes a tap-dance slot: 0-19 are mod-tap ([`MT_KEYCODE`]), 20-39
+    /// toggle ([`TGL_KEYCODE`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn set_tap_dance(&mut self, index: u8, slot: &TapDance) -> Result<(), HidError> {
+        let mut bytes = vec![VIAL_PREFIX, ENTRY_OP, TAP_DANCE_SET, index];
+        bytes.extend_from_slice(&slot.tap.to_be_bytes());
+        bytes.extend_from_slice(&slot.hold.to_be_bytes());
+        bytes.extend_from_slice(&slot.delay.to_be_bytes());
+        self.request(&bytes).map(drop)
+    }
+
     /// Reads all onboard macros with their playback modes.
     ///
     /// # Errors
@@ -972,6 +1203,49 @@ mod tests {
                 cols,
             }),
         )
+    }
+
+    #[test]
+    fn dks_round_trips() {
+        let slot = DksSlot {
+            actions: vec![
+                DksAction {
+                    status: 0b11,
+                    code: 4,
+                },
+                DksAction {
+                    status: 1 << 9,
+                    code: 5,
+                },
+                DksAction::default(),
+                DksAction::default(),
+            ],
+            top: 0.5,
+            bottom: 3.0,
+        };
+        let mut reply = vec![3, 150, 15];
+        reply.extend(encode_dks(2, &slot));
+        assert_eq!(&reply[3..7], &[0, 0, 3, 2]);
+        assert_eq!(decode_dks(&reply), slot);
+    }
+
+    #[test]
+    fn advanced_key_round_trips() {
+        let key = AdvancedKey {
+            mode: 2,
+            point: 1.5,
+            rt: true,
+            key1: [2, 1],
+            key2: [2, 3],
+            trigger_delay: 200,
+            key_delay: 200,
+            random: 50,
+            ..AdvancedKey::default()
+        };
+        let mut reply = vec![3, 150, 32];
+        reply.extend(encode_advanced(4, &key));
+        assert_eq!(reply.len(), 24);
+        assert_eq!(decode_advanced(&reply), key);
     }
 
     #[test]

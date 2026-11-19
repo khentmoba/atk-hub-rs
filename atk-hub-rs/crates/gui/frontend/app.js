@@ -1022,6 +1022,11 @@ function previewResponse(command, args) {
     headset_list: [{ path: "mock", productId: 4706, name: "ATK N9 V2 Ultimate", family: "bolutek" }],
     headset_bolutek_state: { battery: 76, status: "discharging", eqMode: 0, surround: true, spatial: false, autoPowerOff: 2, sidetone: true, sidetoneVolume: 6, promptVolume: 8, dongleVersion: "1.0.3.2", headsetVersion: "1.0.5.1", rgb: true },
     headset_bolutek_peq: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((freq) => ({ freq, gain: 0, q: 1, kind: 1, enabled: true })),
+    kb_advanced_keys: {
+      dks: Array.from({ length: 20 }, (_, i) => ({ actions: [{ status: i ? 0 : 3, code: i ? 0 : 4 }, { status: 0, code: 0 }, { status: 0, code: 0 }, { status: 0, code: 0 }], top: 0.5, bottom: 3 })),
+      advanced: Array.from({ length: 20 }, (_, i) => ({ mode: i ? 0 : 2, point: 1.5, withGlobal: false, rt: false, key1: [3, 1], key2: [3, 3], layer: 0, triggerDelay: 200, keyDelay: 200, random: 50, triggerSwitch: 0 })),
+      tapDance: Array.from({ length: 40 }, () => ({ tap: 0, hold: 0, delay: 200 })),
+    },
     kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },

@@ -607,7 +607,168 @@ function kbDeviceCards() {
       </div>
       <div class="output" id="kb-output">Actuation range ${actMin}–${actMax} mm · rapid trigger ${rtMin}–${rtMax} mm.</div>
     </article>
-    ${kbMacroCard()}`;
+    ${kbMacroCard()}
+    ${kbAdvancedCard()}`;
+}
+
+/* ------------------------------------------------ keyboard advanced keys -- */
+
+const ADV_KINDS = [["dks", "DKS · dynamic keystroke"], ["mt", "MT · tap / hold"], ["tgl", "TGL · toggle"], ["rs", "RS · rapid snap"], ["socd", "SOCD · opposite keys"], ["oks", "OKS · one key, two keys"], ["aks", "AKS · alternate keys"]];
+const SOCD_MODES = [[2, "Last input wins"], [3, "Key 1 wins"], [4, "Key 2 wins"], [5, "Neutral (both cancel)"]];
+const AKS_MODES = [[9, "Balanced"], [7, "Key 1 first"], [8, "Key 2 first"]];
+const DKS_STAGES = ["Press", "Bottom", "Lift", "Release"];
+const ADV_MODE_KIND = { 1: "rs", 2: "socd", 3: "socd", 4: "socd", 5: "socd", 6: "oks", 7: "aks", 8: "aks", 9: "aks" };
+
+function dksDecode(status) {
+  const out = [-1, -1, -1, -1];
+  const bit = (n) => (status >> n) & 1;
+  let k = 0;
+  while (k < 4) {
+    if (!bit(3 * k)) { k += 1; continue; }
+    if (k === 3 || !bit(3 * k + 1)) { out[k] = 0; k += 1; continue; }
+    let j = k + 1;
+    while (j < 3 && bit(3 * j - 1) && bit(3 * j) && bit(3 * j + 1)) j += 1;
+    out[k] = j;
+    k = j;
+  }
+  return out;
+}
+
+function dksEncode(stages) {
+  let status = 0;
+  let k = 0;
+  while (k < 4) {
+    const choice = stages[k];
+    if (choice === 0) status |= 1 << (3 * k);
+    if (choice > k) {
+      for (let n = 3 * k; n <= 3 * choice - 2; n += 1) status |= 1 << n;
+      k = choice;
+      continue;
+    }
+    k += 1;
+  }
+  return status;
+}
+
+function advKeyOptions(value) {
+  const groups = kbKeyGroups().slice(0, 3);
+  return `<option value="0" ${value ? "" : "selected"}>None</option>${groups.map(([label, options]) => `<optgroup label="${escapeHtml(label)}">${options.filter(([v]) => v > 1).map(([v, name]) =>
+    `<option value="${v}" ${v === value ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</optgroup>`).join("")}`;
+}
+
+function advSlotUsed(kind, i) {
+  const a = state.kbAdv;
+  if (!a) return false;
+  if (kind === "dks") return (a.dks[i]?.actions ?? []).some((x) => x.code && x.status);
+  if (kind === "mt") return Boolean(a.tapDance[i]?.tap || a.tapDance[i]?.hold);
+  if (kind === "tgl") return Boolean(a.tapDance[i + 20]?.tap);
+  return ADV_MODE_KIND[a.advanced[i]?.mode] === kind;
+}
+
+function kbAdvancedCard() {
+  const a = state.kbAdv;
+  const kind = state.advKind ?? "dks";
+  const slot = state.advSlot ?? 0;
+  const sel = state.kbSel;
+  const slotSelect = select("Slot", "adv-slot", Array.from({ length: 20 }, (_, i) => [i, `${i + 1}${advSlotUsed(kind, i) ? " ●" : ""}`]), slot);
+  let body = `<div class="notice">Read the keyboard's advanced keys first.</div>`;
+  if (a && kind === "dks") {
+    const d = a.dks[slot] ?? { actions: [], top: 0.5, bottom: 3 };
+    body = `${[0, 1, 2, 3].map((row) => {
+      const act = d.actions[row] ?? { status: 0, code: 0 };
+      const stages = dksDecode(act.status);
+      let covered = -1;
+      return `<div class="actions" style="align-items:flex-end">
+        <label class="field"><span>Binding ${row + 1}</span><select id="dks-code-${row}">${advKeyOptions(act.code)}</select></label>
+        ${DKS_STAGES.map((name, k) => {
+          const disabled = k < covered;
+          if (stages[k] > k) covered = stages[k];
+          const opts = [[-1, "—"], [0, "Tap"], ...[1, 2, 3].filter((j) => j > k).map((j) => [j, `Hold → ${DKS_STAGES[j]}`])];
+          return `<label class="field"><span>${name}</span><select id="dks-st-${row}-${k}" ${disabled ? "disabled" : ""}>${opts.map(([v, t]) => `<option value="${v}" ${v === (disabled ? -1 : stages[k]) ? "selected" : ""}>${t}</option>`).join("")}</select></label>`;
+        }).join("")}
+      </div>`;
+    }).join("")}
+    ${field("Upper point (mm)", "dks-top", String(d.top || 0.5), "number")}
+    ${field("Lower point (mm)", "dks-bottom", String(d.bottom || 3), "number")}`;
+  } else if (a && (kind === "mt" || kind === "tgl")) {
+    const t = a.tapDance[kind === "mt" ? slot : slot + 20] ?? { tap: 0, hold: 0, delay: 200 };
+    body = `<div class="form-row"><label for="td-tap">${kind === "mt" ? "Tap sends" : "Key to toggle"}</label><select id="td-tap">${advKeyOptions(t.tap)}</select></div>
+      ${kind === "mt" ? `<div class="form-row"><label for="td-hold">Hold sends</label><select id="td-hold">${advKeyOptions(t.hold)}</select></div>` : ""}
+      ${field("Hold threshold (ms)", "td-delay", String(t.delay || 200), "number")}`;
+  } else if (a) {
+    const k = a.advanced[slot] ?? {};
+    const key1 = state.advKey1 ?? (ADV_MODE_KIND[k.mode] ? k.key1 : null);
+    const key2 = state.advKey2 ?? (ADV_MODE_KIND[k.mode] ? k.key2 : null);
+    const pos = (p) => (p ? `r${p[0]} c${p[1]}${state.kbMap?.[p[0]]?.[p[1]] ? ` · ${kbLabel(state.kbMap[p[0]][p[1]])}` : ""}` : "not set");
+    body = `<div class="stat-row"><span class="stat-label">Key 1</span><span class="stat-value">${escapeHtml(pos(key1))}</span></div>
+      <div class="stat-row"><span class="stat-label">Key 2</span><span class="stat-value">${escapeHtml(pos(key2))}</span></div>
+      <div class="actions">
+        <button class="button sm" type="button" data-adv-key="1" ${sel ? "" : "disabled"}>Selected → Key 1</button>
+        <button class="button sm" type="button" data-adv-key="2" ${sel ? "" : "disabled"}>Selected → Key 2</button>
+      </div>
+      ${kind === "socd" ? select("Resolution", "adv-mode", SOCD_MODES, ADV_MODE_KIND[k.mode] === "socd" ? k.mode : 2) : ""}
+      ${kind === "aks" ? select("Order", "adv-mode", AKS_MODES, ADV_MODE_KIND[k.mode] === "aks" ? k.mode : 9) : ""}
+      ${field("Trigger point (mm)", "adv-point", String(k.point || 1.5), "number")}
+      ${toggle("Rapid trigger", "adv-rt", k.rt)}
+      ${kind === "aks" ? `${field("Trigger delay (ms)", "adv-tdelay", String(k.triggerDelay || 200), "number")}
+      ${field("Key delay (ms)", "adv-kdelay", String(k.keyDelay || 200), "number")}
+      ${field("Randomness (%)", "adv-random", String(k.random ?? 50), "number")}` : ""}`;
+  }
+  const binds = kind === "dks" || kind === "mt" || kind === "tgl";
+  return `
+    <article class="card">
+      <div class="card-title"><h2>Advanced keys</h2><span>${binds ? (sel ? `binds key r${sel[0]} c${sel[1]}` : "select a key on the layout") : "pairs two keys"}</span></div>
+      ${select("Type", "adv-kind", ADV_KINDS, kind)}
+      ${slotSelect}
+      ${body}
+      <div class="output" id="adv-output"></div>
+      <div class="actions">
+        <button class="button" type="button" data-adv-read>Read Advanced Keys</button>
+        <button class="button primary" type="button" data-adv-save ${a && (!binds || sel) ? "" : "disabled"}>Save${binds ? " & Bind Key" : ""}</button>
+        <button class="button" type="button" data-adv-clear ${a ? "" : "disabled"}>Clear Slot</button>
+      </div>
+    </article>`;
+}
+
+async function kbAdvancedSave(clear) {
+  const kind = state.advKind ?? "dks";
+  const index = num("adv-slot", 0);
+  const a = state.kbAdv;
+  if (kind === "dks") {
+    const slot = clear ? { actions: [0, 1, 2, 3].map(() => ({ status: 0, code: 0 })), top: 0, bottom: 0 } : {
+      actions: [0, 1, 2, 3].map((row) => ({ code: num(`dks-code-${row}`, 0), status: dksEncode([0, 1, 2, 3].map((k) => ($(`dks-st-${row}-${k}`)?.disabled ? -1 : num(`dks-st-${row}-${k}`, -1)))) })),
+      top: num("dks-top", 0.5), bottom: num("dks-bottom", 3),
+    };
+    await call("kb_set_dks", { index, slot }, clear ? `DKS ${index + 1} cleared` : `DKS ${index + 1} saved`);
+    a.dks[index] = slot;
+  } else if (kind === "mt" || kind === "tgl") {
+    const slot = clear ? { tap: 0, hold: 0, delay: 0 } : { tap: num("td-tap", 0), hold: kind === "mt" ? num("td-hold", 0) : 0, delay: Math.max(0, Math.min(65535, num("td-delay", 200))) };
+    const i = kind === "mt" ? index : index + 20;
+    await call("kb_set_tap_dance", { index: i, slot }, clear ? `${kind.toUpperCase()} ${index + 1} cleared` : `${kind.toUpperCase()} ${index + 1} saved`);
+    a.tapDance[i] = slot;
+  } else {
+    const prev = a.advanced[index] ?? {};
+    const key1 = state.advKey1 ?? prev.key1;
+    const key2 = state.advKey2 ?? prev.key2;
+    if (!clear && (!key1 || (kind !== "rs" && !key2) )) throw new Error("Choose the keys first: select a key on the layout, then press Selected → Key 1 / Key 2");
+    const mode = clear ? 0 : kind === "rs" ? 1 : kind === "oks" ? 6 : num("adv-mode", kind === "socd" ? 2 : 9);
+    const key = clear ? { mode: 0, point: 0, withGlobal: false, rt: false, key1: [0, 0], key2: [0, 0], layer: 0, triggerDelay: 0, keyDelay: 0, random: 0, triggerSwitch: 0 } : {
+      mode, point: num("adv-point", 1.5), withGlobal: false, rt: checked("adv-rt"), key1, key2: key2 ?? key1, layer: state.kbLayer ?? 0,
+      triggerDelay: num("adv-tdelay", 200), keyDelay: num("adv-kdelay", 200), random: Math.max(0, Math.min(100, num("adv-random", 50))), triggerSwitch: 0,
+    };
+    await call("kb_set_advanced_key", { index, key }, clear ? `Slot ${index + 1} cleared` : `${kind.toUpperCase()} slot ${index + 1} saved`);
+    a.advanced[index] = key;
+    state.advKey1 = null;
+    state.advKey2 = null;
+  }
+  const bases = { dks: 0x7e05, mt: 0x5700, tgl: 0x5714 };
+  if (!clear && bases[kind] !== undefined && state.kbSel) {
+    const [row, col] = state.kbSel;
+    const code = bases[kind] + index;
+    await call("kb_set_key", { layer: state.kbLayer ?? 0, row, col, code }, `Key r${row} c${col} bound to ${kind.toUpperCase()} ${index + 1}`);
+    state.kbMap[row][col] = code;
+  }
+  renderPage();
 }
 
 /* ------------------------------------------------ keyboard onboard macros -- */
@@ -802,6 +963,10 @@ export async function kbHandleClick(t) {
     });
     return true;
   }
+  if ("advRead" in d) { await guarded(t, async () => { state.kbAdv = await call("kb_advanced_keys", {}, "Advanced keys read"); renderPage(); }); return true; }
+  if ("advSave" in d) { await guarded(t, () => kbAdvancedSave(false)); return true; }
+  if ("advClear" in d) { await guarded(t, () => kbAdvancedSave(true)); return true; }
+  if ("advKey" in d && state.kbSel) { state[d.advKey === "1" ? "advKey1" : "advKey2"] = [...state.kbSel]; renderPage(); return true; }
   if ("kbmWrite" in d) { await guarded(t, () => kbMacroWrite(false)); return true; }
   if ("kbmClear" in d) { await guarded(t, () => kbMacroWrite(true)); return true; }
   if ("kbMagnetRead" in d) { await guarded(t, kbMagnetRead); return true; }
@@ -1552,6 +1717,8 @@ export function wireLiveEvents() {
       invoke("kb_keymap", { layer: state.kbLayer }).then((map) => { state.kbMap = map; renderKeyboard(); }).catch((error) => setStatus(errorText(error)));
     }
     if (event.target.id === "hs-device") { state.headsetIndex = Number(event.target.value); state.headset = null; state.headsetPeq = null; loadHeadset(); }
+    if (event.target.id === "adv-kind") { state.advKind = event.target.value; state.advKey1 = null; state.advKey2 = null; renderPage(); }
+    if (event.target.id === "adv-slot") { state.advSlot = Number(event.target.value); state.advKey1 = null; state.advKey2 = null; renderPage(); }
     if (event.target.id === "kbm-slot") { state.kbMacroSlot = Number(event.target.value); renderPage(); }
     if (event.target.id === "ob-kind") {
       state.obKind = event.target.value;
