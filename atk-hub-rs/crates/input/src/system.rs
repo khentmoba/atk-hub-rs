@@ -307,3 +307,109 @@ pub fn send_text(text: &str) {
         send_unicode(unit);
     }
 }
+
+/// Clipboard change counter; it increases whenever the clipboard changes.
+#[must_use]
+pub fn clipboard_sequence() -> u32 {
+    // SAFETY: GetClipboardSequenceNumber has no preconditions.
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+/// Reads the clipboard as text.
+#[must_use]
+pub fn clipboard_text() -> Option<String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    const CF_UNICODETEXT: u32 = 13;
+    // SAFETY: the clipboard is opened for this thread and closed on every
+    // path; the handle is locked only while its UTF-16 text is copied.
+    unsafe {
+        OpenClipboard(None).ok()?;
+        let text = GetClipboardData(CF_UNICODETEXT).ok().and_then(|handle| {
+            let global = HGLOBAL(handle.0);
+            let ptr = GlobalLock(global).cast::<u16>();
+            if ptr.is_null() {
+                return None;
+            }
+            let mut len = 0;
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+            let _ = GlobalUnlock(global);
+            Some(text)
+        });
+        let _ = CloseClipboard();
+        text
+    }
+}
+
+/// Replaces the clipboard with text.
+pub fn set_clipboard_text(text: &str) {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    const CF_UNICODETEXT: u32 = 13;
+    let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: the buffer is allocated with room for every unit, filled while
+    // locked, and handed to the clipboard, which then owns it.
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return;
+        }
+        let _ = EmptyClipboard();
+        if let Ok(global) = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2) {
+            let ptr = GlobalLock(global).cast::<u16>();
+            if !ptr.is_null() {
+                std::ptr::copy_nonoverlapping(units.as_ptr(), ptr, units.len());
+                let _ = GlobalUnlock(global);
+                let _ = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(global.0)));
+            }
+        }
+        let _ = CloseClipboard();
+    }
+}
+
+/// Presses Ctrl+C in the focused window.
+pub fn send_copy() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+    let key = |vk: u16, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    send_inputs(&[
+        key(0x11, false),
+        key(0x43, false),
+        key(0x43, true),
+        key(0x11, true),
+    ]);
+}
+
+/// Opens a web address in the default browser.
+pub fn open_url(url: &str) {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows::core::{HSTRING, w};
+    let target = HSTRING::from(url);
+    // SAFETY: both strings are valid null-terminated UTF-16 for the call.
+    unsafe {
+        ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL);
+    }
+}

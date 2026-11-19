@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Selection toolbar</title>
+<style>
+  html, body { margin: 0; background: transparent; font: 12px "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
+  .panel { margin: 6px; background: #1d1f24; color: #f2f2f2; border-radius: 10px; box-shadow: 0 6px 22px rgba(0,0,0,.35); padding: 8px; transition: opacity .4s; }
+  .panel.dim { opacity: .35; }
+  .bar { display: flex; gap: 6px; align-items: center; -webkit-app-region: drag; }
+  button { -webkit-app-region: no-drag; border: 0; border-radius: 6px; padding: 5px 10px; background: #2d3038; color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: #ff6a00; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .close { margin-left: auto; padding: 4px 8px; background: transparent; }
+  .text { margin-top: 6px; color: #9aa0aa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .result { margin-top: 8px; max-height: 120px; overflow: auto; white-space: pre-wrap; line-height: 1.45; user-select: text; }
+  .result:empty, .tools[hidden] { display: none; }
+  .tools { margin-top: 6px; display: flex; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="panel" id="panel">
+  <div class="bar" id="bar"><button class="close" id="close" title="Close">✕</button></div>
+  <div class="text" id="text"></div>
+  <div class="result" id="result"></div>
+  <div class="tools" id="tools" hidden><button id="copy">Copy</button></div>
+</div>
+<script>
+  const tauri = window.__TAURI__;
+  const invoke = (cmd, args) => tauri.core.invoke(cmd, args);
+  const $ = (id) => document.getElementById(id);
+  let text = "";
+  let prefs = null;
+  let timer = null;
+  let hovered = false;
+
+  function fade() {
+    clearTimeout(timer);
+    $("panel").classList.remove("dim");
+    const ms = prefs?.autoHideMs ?? 4000;
+    if (ms > 0 && !hovered && !$("result").textContent) timer = setTimeout(() => invoke("toolbar_hide"), ms);
+  }
+
+  async function render() {
+    prefs = await invoke("toolbar_get");
+    const bar = $("bar");
+    bar.querySelectorAll("[data-kind]").forEach((el) => el.remove());
+    for (const b of [...prefs.buttons].filter((x) => x.enabled).sort((a, c) => a.order - c.order)) {
+      const el = document.createElement("button");
+      el.textContent = b.label;
+      el.dataset.kind = b.kind;
+      bar.insertBefore(el, $("close"));
+    }
+  }
+
+  document.addEventListener("click", async (event) => {
+    const el = event.target.closest("button");
+    if (!el) return;
+    if (el.id === "close") { invoke("toolbar_hide"); return; }
+    if (el.id === "copy") { await invoke("toolbar_copy", { text: $("result").textContent }); el.textContent = "Copied"; return; }
+    const kind = el.dataset.kind;
+    if (!kind) return;
+    clearTimeout(timer);
+    el.disabled = true;
+    $("result").textContent = kind === "search" ? "" : "Working…";
+    try {
+      const out = await invoke("toolbar_action", { kind, text });
+      $("result").textContent = out;
+      $("tools").hidden = !out;
+      if (!out) invoke("toolbar_hide");
+    } catch (error) {
+      $("result").textContent = String(error?.message ?? error);
+      $("tools").hidden = true;
+    } finally {
+      el.disabled = false;
+    }
+  });
+
+  $("panel").addEventListener("mouseenter", () => { hovered = true; clearTimeout(timer); $("panel").classList.remove("dim"); });
+  $("panel").addEventListener("mouseleave", () => { hovered = false; fade(); });
+
+  tauri.event.listen("toolbar:show", async (event) => {
+    text = String(event.payload ?? "");
+    $("text").textContent = text.replace(/\s+/g, " ");
+    $("result").textContent = "";
+    $("tools").hidden = true;
+    $("copy").textContent = "Copy";
+    await render();
+    fade();
+  });
+  render();
+</script>
+</body>
+</html>

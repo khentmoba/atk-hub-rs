@@ -21,6 +21,7 @@ tauri-build = { version = "2" }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
+ureq = { version = "2.12", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 atk-agent.workspace = true

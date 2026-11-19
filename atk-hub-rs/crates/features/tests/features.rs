@@ -156,3 +156,17 @@ fn game_rule_matching_ignores_case() {
         "a%20b.exe"
     );
 }
+
+#[test]
+fn plugins_report_renderers_and_can_be_removed() {
+    let root = std::env::temp_dir().join(format!("atk-plugins-{}", std::process::id()));
+    let dir = root.join("plugins").join("pc-script").join("1.0.0");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("pc-script.js"), "export default {}").unwrap();
+    let plugins = atk_features::list_plugins(&root).unwrap();
+    assert!(plugins[0].pc_script && !plugins[0].floating);
+    assert!(atk_features::remove_plugin(&root, "../evil").is_err());
+    atk_features::remove_plugin(&root, "pc-script").unwrap();
+    assert!(atk_features::list_plugins(&root).unwrap().is_empty());
+    let _ = fs::remove_dir_all(root);
+}

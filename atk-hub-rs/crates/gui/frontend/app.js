@@ -1,5 +1,5 @@
 import {
-  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards,
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -40,7 +40,7 @@ const state = {
 };
 
 const glyphs = {
-  overview: "⌂", devices: "DV", mouse: "MO", keyboard: "KB", games: "GM", pcscript: "PC", lighting: "LS", macros: "MX", audio: "TH",
+  overview: "⌂", devices: "DV", mouse: "MO", keyboard: "KB", games: "GM", pcscript: "PC", toolbar: "FT", lighting: "LS", macros: "MX", audio: "TH",
   wallpapers: "BG", music: "MS", pets: "PT", plugins: "PM", updater: "UP",
   drivers: "DR", settings: "ST", diagnostics: "DG",
 };
@@ -238,12 +238,40 @@ function renderPluginList() {
     list.textContent = "No plugins installed in plugins directory.";
     return;
   }
-  list.innerHTML = state.plugins.map((plugin) => `
+  const latest = new Map();
+  for (const plugin of state.plugins) {
+    const prev = latest.get(plugin.id);
+    if (!prev || plugin.version.localeCompare(prev.version, undefined, { numeric: true }) > 0) latest.set(plugin.id, plugin);
+  }
+  list.innerHTML = [...latest.values()].map((plugin) => {
+    const kinds = [plugin.pc_script && "PC script", plugin.floating && "Floating toolbar", plugin.via_json && "VIA definitions"].filter(Boolean);
+    const manage = plugin.pc_script || plugin.id === "pc-script" ? "pcscript" : plugin.floating || plugin.id === "floating-selection" ? "toolbar" : "";
+    return `
     <div class="list-item">
-      <span><strong>${escapeHtml(plugin.id)}</strong> · v${escapeHtml(plugin.version)}</span>
-      <span class="chip live">Installed</span>
-    </div>`).join("");
+      <span><strong>${escapeHtml(plugin.id)}</strong> · v${escapeHtml(plugin.version)}${kinds.length ? ` · ${escapeHtml(kinds.join(", "))}` : ""}</span>
+      <span class="actions" style="margin:0">
+        <span class="chip live">Installed</span>
+        ${manage ? `<button class="button sm" type="button" data-page="${manage}">Manage</button>` : ""}
+        <button class="button sm" type="button" data-plugin-remove="${escapeHtml(plugin.id)}">Remove</button>
+      </span>
+    </div>`;
+  }).join("");
 }
+
+document.addEventListener("click", async (event) => {
+  const target = event.target.closest("[data-plugin-remove]");
+  if (!target) return;
+  if (target.dataset.confirm !== "1") { target.dataset.confirm = "1"; target.textContent = "Click to confirm"; return; }
+  target.disabled = true;
+  try {
+    const result = await invoke("plugins_remove", { id: target.dataset.pluginRemove });
+    state.plugins = Array.isArray(result) ? result : [];
+    setStatus(`${target.dataset.pluginRemove} removed`);
+  } catch (error) {
+    setStatus(String(error?.message ?? error));
+  }
+  renderPluginList();
+});
 
 function renderWallpaperGrid() {
   const grid = document.getElementById("wallpaper-grid");
@@ -722,6 +750,7 @@ const renderers = {
   music: musicPage,
   pets: petsPage,
   plugins: pluginsPage,
+  toolbar: toolbarPage,
   updater: updaterPage,
   drivers: driversPage,
   settings: settingsPage,
@@ -995,6 +1024,7 @@ function previewResponse(command, args) {
     { id: "plugins", label: "Plugin Market", subtitle: "Installed and downloadable extensions", group: "Library" },
     { id: "updater", label: "Update", subtitle: "Version feed and installer", group: "System" },
     { id: "drivers", label: "Drivers", subtitle: "Driver packages and firmware", group: "System" },
+    { id: "toolbar", label: "Selection Toolbar", subtitle: "Translate, summarize or search any selected text", group: "System" },
     { id: "settings", label: "Settings", subtitle: "Persisted application configuration", group: "System" },
     { id: "diagnostics", label: "Diagnostics", subtitle: "ASAR, endpoints, IPC and agent protocol", group: "System" },
   ];
@@ -1011,7 +1041,8 @@ function previewResponse(command, args) {
     },
     agent_auto_connect: { connected: true, pipe: "atk-hub-agent-session-1" },
     device_list: [{ product: "VGN Dragonfly 4K Receiver", vid: 13652, pid: 62725, usage: 1 }],
-    plugins_list: [{ id: "demo-plugin", version: "1.0" }],
+    plugins_list: [{ id: "pc-script", version: "1.0.2", pc_script: true }, { id: "demo-plugin", version: "1.0" }],
+    plugins_remove: [{ id: "pc-script", version: "1.0.2", pc_script: true }],
     keymaps: ["rgb.json", "wave.json", "reactive.json"],
     wallpaper_catalog: { wallpaper: [{ id: 1, title: "Aurora", value: "aurora", version: "1" }] },
     ipc_categories: { groups: [{ category: "device", channels: ["device.list", "device.write"] }], agentMethods: ["state.get"] },
@@ -1027,6 +1058,7 @@ function previewResponse(command, args) {
       advanced: Array.from({ length: 20 }, (_, i) => ({ mode: i ? 0 : 2, point: 1.5, withGlobal: false, rt: false, key1: [3, 1], key2: [3, 3], layer: 0, triggerDelay: 200, keyDelay: 200, random: 50, triggerSwitch: 0 })),
       tapDance: Array.from({ length: 40 }, () => ({ tap: 0, hold: 0, delay: 200 })),
     },
+    toolbar_get: { enabled: false, mouseGesture: true, doubleCtrl: true, clipboardMonitor: false, restoreClipboard: true, autoHideMs: 4000, buttons: [["translate", "Translate"], ["summarize", "Summarize"], ["polish", "Polish"], ["search", "Search"]].map(([kind, label], order) => ({ id: kind, kind, label, enabled: true, order })), ai: { baseUrl: "", apiKey: "", path: "/api/ai-tools" } },
     kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },

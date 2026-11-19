@@ -1567,6 +1567,80 @@ async function headsetClick(t) {
   return false;
 }
 
+/* ------------------------------------------------------ selection toolbar -- */
+
+export function toolbarPage() {
+  const heading = pageHeading(state.pages.find((page) => page.id === "toolbar"));
+  const p = state.toolbar;
+  if (!p) return `${heading}<div class="notice">Loading toolbar settings…</div>`;
+  const buttons = [...p.buttons].sort((a, b) => a.order - b.order);
+  return `
+    ${heading}
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Floating toolbar</h2><span>${p.enabled ? "on" : "off"}</span></div>
+        ${toggle("Enable the selection toolbar", "tb-enabled", p.enabled)}
+        ${toggle("Show after selecting text with the mouse", "tb-mouse", p.mouseGesture)}
+        ${toggle("Show after pressing Ctrl twice", "tb-ctrl", p.doubleCtrl)}
+        ${toggle("Show whenever text is copied", "tb-clip", p.clipboardMonitor)}
+        ${toggle("Restore the clipboard after grabbing a selection", "tb-restore", p.restoreClipboard)}
+        ${select("Fade out after", "tb-hide", [[0, "Never"], [2000, "2 seconds"], [4000, "4 seconds"], [8000, "8 seconds"], [15000, "15 seconds"]], p.autoHideMs)}
+        <div class="notice" style="margin-top:10px">Grabbing a selection sends Ctrl+C to the app you're working in, the same way ATK HUB does.</div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Buttons</h2><span>top to bottom = left to right</span></div>
+        ${buttons.map((b, i) => `<div class="actions" style="align-items:center">
+          <label class="toggle-row" style="flex:1"><span>${escapeHtml(b.label)}</span><input type="checkbox" id="tb-btn-${i}" data-kind="${escapeHtml(b.kind)}" ${b.enabled ? "checked" : ""} /><span class="switch"></span></label>
+          <button class="button sm" type="button" data-tb-move="${i}" data-dir="-1" ${i ? "" : "disabled"}>↑</button>
+          <button class="button sm" type="button" data-tb-move="${i}" data-dir="1" ${i < buttons.length - 1 ? "" : "disabled"}>↓</button>
+        </div>`).join("")}
+        ${field("AI server address", "tb-ai-base", p.ai.baseUrl)}
+        ${field("AI request path", "tb-ai-path", p.ai.path)}
+        ${field("API key (optional)", "tb-ai-key", p.ai.apiKey, "password")}
+        ${field("Test text", "tb-test", "Hello from ATK HUB")}
+        <div class="actions">
+          <button class="button primary" type="button" data-tb-save>Save</button>
+          <button class="button" type="button" data-tb-preview>Show Toolbar</button>
+          <button class="button" type="button" data-tb-reset>Defaults</button>
+        </div>
+      </article>
+    </div>`;
+}
+
+function readToolbar() {
+  const p = state.toolbar;
+  const buttons = [...p.buttons].sort((a, b) => a.order - b.order).map((b, i) => ({ ...b, enabled: checked(`tb-btn-${i}`), order: i }));
+  return {
+    ...p, enabled: checked("tb-enabled"), mouseGesture: checked("tb-mouse"), doubleCtrl: checked("tb-ctrl"), clipboardMonitor: checked("tb-clip"),
+    restoreClipboard: checked("tb-restore"), autoHideMs: num("tb-hide", 4000), buttons,
+    ai: { baseUrl: $("tb-ai-base")?.value.trim() ?? "", path: $("tb-ai-path")?.value.trim() || "/api/ai-tools", apiKey: $("tb-ai-key")?.value ?? "" },
+  };
+}
+
+async function toolbarClick(t) {
+  const d = t.dataset;
+  if ("tbSave" in d) { await guarded(t, async () => { state.toolbar = await call("toolbar_set", { settings: readToolbar() }, "Selection toolbar saved"); renderPage(); }); return true; }
+  if ("tbPreview" in d) { await guarded(t, () => invoke("toolbar_preview", { text: $("tb-test")?.value ?? "" })); return true; }
+  if ("tbReset" in d) {
+    const ai = state.toolbar.ai;
+    state.toolbar = { enabled: false, mouseGesture: true, doubleCtrl: true, clipboardMonitor: false, restoreClipboard: true, autoHideMs: 4000, ai,
+      buttons: [["translate", "Translate"], ["summarize", "Summarize"], ["polish", "Polish"], ["search", "Search"]].map(([kind, label], order) => ({ id: kind, kind, label, enabled: true, order })) };
+    renderPage();
+    return true;
+  }
+  if ("tbMove" in d) {
+    const next = readToolbar();
+    const i = Number(d.tbMove);
+    const j = i + Number(d.dir);
+    [next.buttons[i], next.buttons[j]] = [next.buttons[j], next.buttons[i]];
+    next.buttons.forEach((b, n) => { b.order = n; });
+    state.toolbar = next;
+    renderPage();
+    return true;
+  }
+  return false;
+}
+
 export function petControls() {
   const p = state.petState ?? {};
   return `
@@ -1595,6 +1669,7 @@ export function wireLiveEvents() {
     const d = t.dataset;
     if (await kbHandleClick(t)) return undefined;
     if (await headsetClick(t)) return undefined;
+    if (await toolbarClick(t)) return undefined;
     if ("mouseRead" in d) return guarded(t, readMouse);
     if ("mouseApply" in d) {
       return guarded(t, async () => {
@@ -1791,6 +1866,11 @@ export async function loadLivePage(pageId) {
     }
   } else if (pageId === "pcscript") {
     if (!state.pc) await loadPcScript();
+  } else if (pageId === "toolbar") {
+    if (!state.toolbar) {
+      state.toolbar = await invoke("toolbar_get").catch(() => null);
+      if (state.toolbar) renderPage();
+    }
   } else if (pageId === "audio") {
     if (!state.headsets) await loadHeadset();
     else renderHeadset();

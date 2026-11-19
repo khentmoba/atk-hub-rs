@@ -12,6 +12,7 @@ mod headset;
 mod live;
 mod overlay;
 mod pcscript;
+mod toolbar;
 
 #[cfg(not(windows))]
 use atk_agent::PipeName;
@@ -169,6 +170,12 @@ const PAGES: &[PageInfo] = &[
         id: "drivers",
         label: "Drivers",
         subtitle: "Driver packages and firmware",
+        group: "System",
+    },
+    PageInfo {
+        id: "toolbar",
+        label: "Selection Toolbar",
+        subtitle: "Translate, summarize or search any selected text",
         group: "System",
     },
     PageInfo {
@@ -887,6 +894,12 @@ fn plugins_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn plugins_remove(id: String) -> Result<Value, String> {
+    atk_features::remove_plugin(&user_data_dir(), &id).map_err(|error| error.to_string())?;
+    plugins_list()
+}
+
+#[tauri::command]
 fn plugins_install(
     url: String,
     id: String,
@@ -984,6 +997,12 @@ pub fn run() {
             overlay::desktop_pet_reset_position,
             overlay::desktop_pet_sprite,
             overlay::desktop_pet_upload,
+            toolbar::toolbar_get,
+            toolbar::toolbar_set,
+            toolbar::toolbar_preview,
+            toolbar::toolbar_hide,
+            toolbar::toolbar_copy,
+            toolbar::toolbar_action,
             live::mouse_list,
             live::kb_list,
             headset::headset_list,
@@ -1037,6 +1056,7 @@ pub fn run() {
             app_exit,
             plugins_list,
             plugins_install,
+            plugins_remove,
             update_check,
             driver_metadata,
             driver_prepare,
@@ -1061,6 +1081,8 @@ pub fn run() {
             live::build_lock_overlay(app)?;
             overlay::build_overlays(app)?;
             overlay::spawn_input_watch(app.handle().clone());
+            toolbar::build_toolbar(app)?;
+            toolbar::spawn_selection_watch(app.handle().clone());
             std::thread::spawn(pcscript::resume_on_startup);
             let state = app.state::<HubState>();
             let settings = state

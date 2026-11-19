@@ -6,7 +6,8 @@
     "main",
     "lockhint",
     "woodenfish",
-    "pet"
+    "pet",
+    "toolbar"
   ],
   "permissions": [
     "core:default",

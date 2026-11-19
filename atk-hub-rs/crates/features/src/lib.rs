@@ -46,6 +46,9 @@ pub enum FeatureError {
         /// Observed digest.
         actual: String,
     },
+    /// Caller input was rejected.
+    #[error("{0}")]
+    Invalid(String),
     /// A ZIP archive was invalid or contained an unsafe path.
     #[error("invalid plugin bundle archive: {reason}")]
     InvalidArchive {
@@ -276,6 +279,47 @@ pub struct Plugin {
     pub version: String,
     /// Absolute path of the plugin.
     pub path: PathBuf,
+    /// Ships a floating-selection toolbar renderer.
+    #[serde(default)]
+    pub floating: bool,
+    /// Ships a PC script renderer.
+    #[serde(default)]
+    pub pc_script: bool,
+    /// Ships VIA keyboard definitions (`*.json`).
+    #[serde(default)]
+    pub via_json: bool,
+}
+
+fn has_file(dir: &Path, matches: impl Fn(&str) -> bool) -> bool {
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && matches(&entry.file_name().to_string_lossy().to_lowercase())
+        })
+    })
+}
+
+/// Whether `id` is a safe plugin directory name.
+#[must_use]
+pub fn valid_plugin_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 256 && !id.contains("..") && !id.contains(['/', '\\'])
+}
+
+/// Deletes every installed version of a plugin.
+///
+/// # Errors
+///
+/// Returns an error for an invalid id or when the files cannot be removed.
+pub fn remove_plugin(user_data: &Path, id: &str) -> Result<(), FeatureError> {
+    let id = id.trim();
+    if !valid_plugin_id(id) {
+        return Err(FeatureError::Invalid("invalid plugin id".to_owned()));
+    }
+    let dir = user_data.join("plugins").join(id);
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
+    }
+    Ok(())
 }
 
 /// Lists installed plugin bundles.
@@ -297,10 +341,16 @@ pub fn list_plugins(user_data: &Path) -> Result<Vec<Plugin>, FeatureError> {
         for version_entry in fs::read_dir(id_entry.path())? {
             let version_entry = version_entry?;
             if version_entry.file_type()?.is_dir() {
+                let path = version_entry.path();
                 plugins.push(Plugin {
                     id: id_entry.file_name().to_string_lossy().into_owned(),
                     version: version_entry.file_name().to_string_lossy().into_owned(),
-                    path: version_entry.path(),
+                    floating: has_file(&path, |name| {
+                        name.starts_with("floating-selection") && name.ends_with(".js")
+                    }),
+                    pc_script: has_file(&path, |name| name == "pc-script.js"),
+                    via_json: has_file(&path, |name| name.ends_with(".json")),
+                    path,
                 });
             }
         }
