@@ -1,5 +1,5 @@
 import {
-  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage,
+  mousePage, keyboardPage, gamesPage, macroEditor, hubSettingsCard, petControls, companionCards, pcScriptPage, headsetCards, toolbarPage, liveWallCards, rhythmCards,
   wireLiveEvents, loadLivePage, loadHubSettings, translate,
 } from "./live.js";
 
@@ -293,7 +293,9 @@ function renderWallpaperGrid() {
         <div class="wallpaper-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title || item.value)}</div>
         <div class="wallpaper-meta">
           <span>v${escapeHtml(item.version ?? "1")}</span>
-          ${dl ? `<button class="button sm primary" type="button" data-wallpaper-apply="${escapeHtml(dl)}">Apply</button>` : ""}
+          ${dl ? (state.livewall?.wallpapers ?? []).some((w) => w.id === String(item.id))
+            ? `<button class="button sm primary" type="button" data-lw-apply="${escapeHtml(String(item.id))}">Apply</button>`
+            : `<button class="button sm primary" type="button" data-wallpaper-download="${escapeHtml(String(item.id ?? item.value))}" data-url="${escapeHtml(dl)}" data-title="${escapeHtml(item.title ?? "")}" data-preview="${escapeHtml(thumb)}" data-apply="1">Download &amp; Apply</button>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -560,12 +562,14 @@ function wallpapersPage() {
         <summary>Raw catalogue JSON</summary>
         ${output()}
       </details>
-    </article>`;
+    </article>
+    ${liveWallCards()}`;
 }
 
 function musicPage() {
   return `
     ${pageHeading(state.pages.find((page) => page.id === "music"))}
+    ${rhythmCards()}
     <div class="grid two">
       <article class="card">
         <div class="card-title"><h2>Legacy rhythm service</h2><span id="music-status-badge">Checking…</span></div>
@@ -1018,8 +1022,8 @@ function previewResponse(command, args) {
     { id: "audio", label: "Audio", subtitle: "Headset EQ, sidetone and THX spatial audio", group: "Device" },
     { id: "games", label: "Game Mode", subtitle: "Switch mouse profiles when a game is in focus", group: "Device" },
     { id: "pcscript", label: "PC Script", subtitle: "Lua scripts that automate mouse and keyboard input", group: "Device" },
-    { id: "wallpapers", label: "Background Theme", subtitle: "Cloud wallpaper catalogue", group: "Library" },
-    { id: "music", label: "Music Score Tool", subtitle: "Legacy music rhythm service", group: "Library" },
+    { id: "wallpapers", label: "Background Theme", subtitle: "Live desktop wallpapers for every monitor", group: "Library" },
+    { id: "music", label: "Music Rhythm", subtitle: "Keyboard lighting and wallpapers that dance to your music", group: "Library" },
     { id: "pets", label: "Desktop Pets", subtitle: "Companion and wooden-fish settings", group: "Library" },
     { id: "plugins", label: "Plugin Market", subtitle: "Installed and downloadable extensions", group: "Library" },
     { id: "updater", label: "Update", subtitle: "Version feed and installer", group: "System" },
@@ -1059,6 +1063,9 @@ function previewResponse(command, args) {
       tapDance: Array.from({ length: 40 }, () => ({ tap: 0, hold: 0, delay: 200 })),
     },
     toolbar_get: { enabled: false, mouseGesture: true, doubleCtrl: true, clipboardMonitor: false, restoreClipboard: true, autoHideMs: 4000, buttons: [["translate", "Translate"], ["summarize", "Summarize"], ["polish", "Polish"], ["search", "Search"]].map(([kind, label], order) => ({ id: kind, kind, label, enabled: true, order })), ai: { baseUrl: "", apiKey: "", path: "/api/ai-tools" } },
+    livewall_list: { current: "1", displays: [{ index: 0, name: "\\\\.\\DISPLAY1", width: 2560, height: 1440, x: 0, y: 0, wallpaperId: "1", url: "" }, { index: 1, name: "\\\\.\\DISPLAY2", width: 1920, height: 1080, x: 2560, y: 0, wallpaperId: "", url: "" }],
+      wallpapers: [{ id: "1", title: "Neon City", fileType: "video", fileSize: 24117248, previewUrl: "", style: { brightness: 100, contrast: 100, saturation: 100, blur: 0, hueRotate: 0, grayscale: 0 } }, { id: "2", title: "Audio Bars", fileType: "html", fileSize: 3145728, previewUrl: "", style: {} }] },
+    rhythm_get: { running: false, device: "Speakers (Realtek(R) Audio)", prefs: { effect: "spectrum", palette: "gradient", color: [0, 170, 255], sensitivity: 100, gravity: 20, keyboard: true, autostart: false } },
     kb_macros: [{ actions: [{ down: true, code: 4, delayMs: 30 }, { down: false, code: 4, delayMs: 0 }], mode: 1, count: 1 }, ...Array.from({ length: 7 }, () => ({ actions: [], mode: 1, count: 1 }))],
     pc_script_logs: { logs: [], running: false },
     overlay_state: { fish: { enabled: true, petVisible: true, sound: true, skin: "default", days: { "2026-11-18": 812, "2026-11-19": 230 } }, pet: { visible: false, scale: 100, alwaysOnTop: true, clickThrough: false, autoPlay: true, followInput: true, showKeyHints: true, showLevel: true, petName: "Aby", xp: 42 }, level: 2, customSound: false, customSprite: false },

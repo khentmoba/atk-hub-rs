@@ -413,3 +413,143 @@ pub fn open_url(url: &str) {
         ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL);
     }
 }
+
+/// Finds the desktop layer that sits behind the icons and parents `hwnd` to
+/// it at the given virtual-screen rectangle (like `electron-as-wallpaper`).
+///
+/// Returns `false` when no desktop host window was found.
+pub fn attach_to_desktop(hwnd: isize, x: i32, y: i32, width: i32, height: i32) -> bool {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, FindWindowExW, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetSystemMetrics,
+        GetWindowLongPtrW, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SMTO_NORMAL, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageTimeoutW, SetParent, SetWindowLongPtrW,
+        SetWindowPos, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    };
+    use windows::core::{BOOL, w};
+
+    unsafe extern "system" fn find_worker(top: HWND, out: LPARAM) -> BOOL {
+        // SAFETY: `out` points at the `HWND` owned by `attach_to_desktop`.
+        unsafe {
+            if FindWindowExW(Some(top), None, w!("SHELLDLL_DefView"), None).is_ok()
+                && let Ok(worker) = FindWindowExW(None, Some(top), w!("WorkerW"), None)
+            {
+                *(out.0 as *mut HWND) = worker;
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+
+    let window = HWND(hwnd as *mut core::ffi::c_void);
+    // SAFETY: plain Win32 calls on window handles; failures are reported by
+    // return values and every pointer passed lives for the call.
+    unsafe {
+        let Ok(progman) = FindWindowW(w!("Progman"), None) else {
+            return false;
+        };
+        // Ask Explorer to split a WorkerW behind the desktop icons.
+        for wparam in [0x0D, 0] {
+            let _ = SendMessageTimeoutW(
+                progman,
+                0x052C,
+                WPARAM(wparam),
+                LPARAM(i32::from(wparam != 0) as isize),
+                SMTO_NORMAL,
+                1000,
+                None,
+            );
+        }
+        let mut worker = HWND::default();
+        let _ = EnumWindows(Some(find_worker), LPARAM(&raw mut worker as isize));
+
+        let style = GetWindowLongPtrW(window, GWL_STYLE);
+        SetWindowLongPtrW(
+            window,
+            GWL_STYLE,
+            (style & !(WS_POPUP.0 as isize)) | WS_CHILD.0 as isize,
+        );
+        let ex = GetWindowLongPtrW(window, GWL_EXSTYLE);
+        SetWindowLongPtrW(
+            window,
+            GWL_EXSTYLE,
+            (ex & !(WS_EX_APPWINDOW.0 as isize))
+                | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
+        );
+
+        let origin = (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        );
+        let flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        if !worker.is_invalid() {
+            if SetParent(window, Some(worker)).is_err() {
+                return false;
+            }
+            let _ = SetWindowPos(
+                window,
+                None,
+                x - origin.0,
+                y - origin.1,
+                width,
+                height,
+                flags,
+            );
+            return true;
+        }
+        // Windows 11 24H2+: the WorkerW lives inside Progman. Slot our window
+        // between the icon view and that WorkerW.
+        let Ok(defview) = FindWindowExW(Some(progman), None, w!("SHELLDLL_DefView"), None) else {
+            return false;
+        };
+        if SetParent(window, Some(progman)).is_err() {
+            return false;
+        }
+        let _ = SetWindowPos(
+            window,
+            Some(defview),
+            x - origin.0,
+            y - origin.1,
+            width,
+            height,
+            flags,
+        );
+        if let Ok(inner) = FindWindowExW(Some(progman), None, w!("WorkerW"), None) {
+            let _ = SetWindowPos(
+                inner,
+                Some(window),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            );
+        }
+        true
+    }
+}
+
+/// Re-applies the current static desktop wallpaper so the desktop repaints
+/// after a live wallpaper window is removed.
+pub fn refresh_desktop_wallpaper() {
+    use windows::Win32::UI::WindowsAndMessaging::SPI_GETDESKWALLPAPER;
+    let mut buffer = [0u16; 520];
+    // SAFETY: the buffer is writable for its full length, which is passed in.
+    unsafe {
+        if SystemParametersInfoW(
+            SPI_GETDESKWALLPAPER,
+            buffer.len() as u32,
+            Some(buffer.as_mut_ptr().cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok()
+        {
+            let _ = SystemParametersInfoW(
+                SPI_SETDESKWALLPAPER,
+                0,
+                Some(buffer.as_mut_ptr().cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            );
+        }
+    }
+}

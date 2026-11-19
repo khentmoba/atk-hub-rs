@@ -1567,6 +1567,211 @@ async function headsetClick(t) {
   return false;
 }
 
+/* ------------------------------------------------------------ music rhythm -- */
+
+const RHYTHM_EFFECTS = [["spectrum", "Spectrum bars"], ["center", "Centre bars"], ["pulse", "Beat pulse"], ["wave", "Colour wave"], ["ripple", "Bass ripple"]];
+const RHYTHM_PALETTES = [["gradient", "Green → red"], ["rainbow", "Rainbow"], ["cycle", "Colour cycle"], ["single", "Single colour"]];
+
+export function rhythmCards() {
+  const r = state.rhythm;
+  if (!r) return `<div class="notice">Loading music rhythm…</div>`;
+  const p = r.prefs;
+  return `
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Music rhythm</h2><span>${r.running ? "playing" : "stopped"}</span></div>
+        <canvas id="rhythm-canvas" width="640" height="150" style="width:100%;height:150px;background:#111;border-radius:8px;display:block"></canvas>
+        <div class="notice" style="margin-top:8px">Listening to: ${escapeHtml(r.device ?? "default speakers")}</div>
+        <div class="actions">
+          <button class="button primary" type="button" data-rhythm-toggle>${r.running ? "Stop" : "Start"}</button>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Effect</h2><span>keyboard backlight</span></div>
+        ${select("Effect", "rh-effect", RHYTHM_EFFECTS, p.effect)}
+        ${select("Colours", "rh-palette", RHYTHM_PALETTES, p.palette)}
+        <div class="form-row"><label for="rh-color">Single colour</label><input type="color" id="rh-color" value="${rgbHex(p.color)}" /></div>
+        ${range("Sensitivity", "rh-sens", 10, 300, 5, p.sensitivity, "%")}
+        ${range("Fall speed", "rh-gravity", 1, 60, 1, p.gravity)}
+        ${toggle("Drive the keyboard backlight", "rh-kb", p.keyboard)}
+        ${toggle("Start with ATK HUB", "rh-auto", p.autostart)}
+        <div class="actions"><button class="button primary" type="button" data-rhythm-save>Save</button></div>
+      </article>
+    </div>`;
+}
+
+function readRhythm() {
+  const c = $("rh-color")?.value ?? "#00aaff";
+  return {
+    effect: $("rh-effect")?.value ?? "spectrum", palette: $("rh-palette")?.value ?? "gradient",
+    color: [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)),
+    sensitivity: num("rh-sens", 100), gravity: num("rh-gravity", 20), keyboard: checked("rh-kb"), autostart: checked("rh-auto"),
+  };
+}
+
+function drawRhythm(bands) {
+  const canvas = $("rhythm-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  ctx.clearRect(0, 0, width, height);
+  const w = width / bands.length;
+  bands.forEach((v, i) => {
+    const h = Math.max(2, v * height);
+    ctx.fillStyle = `hsl(${120 - v * 120}, 90%, 50%)`;
+    ctx.fillRect(i * w + 1, height - h, w - 2, h);
+  });
+}
+
+async function rhythmClick(t) {
+  const d = t.dataset;
+  if ("rhythmToggle" in d) {
+    await guarded(t, async () => {
+      state.rhythm = await invoke(state.rhythm?.running ? "rhythm_stop" : "rhythm_start");
+      if (!state.rhythm.running) drawRhythm(new Array(64).fill(0));
+      renderPage();
+    });
+    return true;
+  }
+  if ("rhythmSave" in d) {
+    await guarded(t, async () => { state.rhythm = await call("rhythm_set", { settings: readRhythm() }, "Music rhythm saved"); renderPage(); });
+    return true;
+  }
+  return false;
+}
+
+if (window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("rhythm:frame", (event) => drawRhythm(event.payload?.bands ?? []));
+}
+
+/* --------------------------------------------------------- live wallpapers -- */
+
+const WALL_STYLE = [["brightness", "Brightness", 0, 200, "%"], ["contrast", "Contrast", 0, 200, "%"], ["saturation", "Saturation", 0, 200, "%"],
+  ["blur", "Blur", 0, 20, "px"], ["hueRotate", "Hue", 0, 360, "°"], ["grayscale", "Grayscale", 0, 100, "%"]];
+
+export function liveWallCards() {
+  const w = state.livewall;
+  if (!w) return `<div class="notice">Loading your wallpapers…</div>`;
+  const byId = new Map(w.wallpapers.map((p) => [p.id, p]));
+  const sel = w.wallpapers.find((p) => p.id === state.livewallSel) ?? byId.get(w.current) ?? w.wallpapers[0];
+  const displays = w.displays.map((d) => {
+    const on = byId.get(d.wallpaperId);
+    return `<div class="list-item">
+      <span><strong>${escapeHtml(d.name)}</strong> · ${d.width}×${d.height}${on ? ` · ${escapeHtml(on.title)}` : " · system wallpaper"}</span>
+      <span class="actions" style="margin:0">
+        <label class="toggle-row" style="margin:0"><span>Use</span><input type="checkbox" id="lw-disp-${d.index}" checked /><span class="switch"></span></label>
+        ${on ? `<button class="button sm" type="button" data-lw-clear="${d.index}">Clear</button>` : ""}
+      </span>
+    </div>`;
+  }).join("");
+  const mine = w.wallpapers.map((p) => `
+    <div class="wallpaper-card${sel && p.id === sel.id ? " selected" : ""}">
+      ${p.previewUrl ? `<img class="wallpaper-thumb" src="${escapeHtml(p.previewUrl)}" alt="" loading="lazy" />` : `<div class="wallpaper-thumb notice">${escapeHtml(p.fileType.toUpperCase())}</div>`}
+      <div class="wallpaper-title" title="${escapeHtml(p.title)}">${escapeHtml(p.title)}</div>
+      <div class="wallpaper-meta">
+        <span>${escapeHtml(p.fileType)} · ${(p.fileSize / 1048576).toFixed(1)} MB</span>
+        <span class="actions" style="margin:0">
+          <button class="button sm primary" type="button" data-lw-apply="${escapeHtml(p.id)}">Apply</button>
+          <button class="button sm" type="button" data-lw-pick="${escapeHtml(p.id)}">Style</button>
+          ${p.fileType === "image" ? `<button class="button sm" type="button" data-lw-system="${escapeHtml(p.id)}" title="Set as the classic Windows wallpaper">System</button>` : ""}
+          <button class="button sm" type="button" data-lw-delete="${escapeHtml(p.id)}">Delete</button>
+        </span>
+      </div>
+    </div>`).join("");
+  const style = sel && sel.fileType !== "html" ? WALL_STYLE.map(([k, label, min, max, unit]) =>
+    range(label, `lw-st-${k}`, min, max, 1, sel.style?.[k] ?? (k === "brightness" || k === "contrast" || k === "saturation" ? 100 : 0), unit)).join("") : "";
+  return `
+    <div class="grid two">
+      <article class="card">
+        <div class="card-title"><h2>Displays</h2><span>${w.displays.length} connected</span></div>
+        ${displays || `<div class="notice">No displays found.</div>`}
+        <div class="actions">
+          <button class="button" type="button" data-lw-clear="all">Clear All</button>
+          <button class="button" type="button" data-lw-refresh>Refresh</button>
+        </div>
+        <div class="notice" style="margin-top:10px">Apply puts the wallpaper behind your desktop icons on every display ticked above. HTML wallpapers react to music while Music Rhythm is running.</div>
+      </article>
+      <article class="card">
+        <div class="card-title"><h2>Wallpaper style</h2><span>${sel ? escapeHtml(sel.title) : "none"}</span></div>
+        ${!sel ? `<div class="notice">Download a wallpaper from the catalogue first.</div>`
+          : sel.fileType === "html" ? `<div class="notice">HTML wallpapers style themselves.</div>`
+          : `${style}<div class="actions"><button class="button primary" type="button" data-lw-style="${escapeHtml(sel.id)}">Save Style</button><button class="button" type="button" data-lw-style-reset="${escapeHtml(sel.id)}">Reset</button></div>`}
+        <div class="card-title" style="margin-top:14px"><h2>Import</h2><span>.zip, video or image</span></div>
+        <input id="lw-import" type="file" accept=".zip,.mp4,.webm,.mov,.jpg,.jpeg,.png,.bmp,.webp,.gif" />
+        <div class="actions"><button class="button" type="button" data-lw-import>Import File</button></div>
+      </article>
+    </div>
+    <article class="card">
+      <div class="card-title"><h2>My wallpapers</h2><span>${w.wallpapers.length} downloaded</span></div>
+      <div class="wallpaper-grid">${mine || `<div class="notice">Nothing downloaded yet.</div>`}</div>
+    </article>`;
+}
+
+async function liveWallLoad() {
+  state.livewall = await invoke("livewall_list").catch(() => null);
+  renderPage();
+}
+
+async function liveWallClick(t) {
+  const d = t.dataset;
+  const done = (result, msg) => { state.livewall = result; renderPage(); if (msg) setStatus(msg); };
+  const checkedDisplays = () => (state.livewall?.displays ?? []).filter((x) => checked(`lw-disp-${x.index}`)).map((x) => x.index);
+  if (d.wallpaperDownload !== undefined) {
+    await guarded(t, async () => {
+      t.textContent = "0%";
+      const result = await invoke("livewall_download", { id: d.wallpaperDownload, url: d.url, title: d.title ?? "", previewUrl: d.preview ?? "" });
+      state.livewallSel = d.wallpaperDownload;
+      done(result, "Wallpaper downloaded");
+      if (d.apply === "1") done(await invoke("livewall_apply", { id: d.wallpaperDownload, displays: checkedDisplays().length ? checkedDisplays() : null }), "Wallpaper applied");
+    });
+    return true;
+  }
+  if (d.lwApply !== undefined) {
+    await guarded(t, async () => {
+      const list = checkedDisplays();
+      done(await invoke("livewall_apply", { id: d.lwApply, displays: list.length ? list : null }), "Wallpaper applied");
+    });
+    return true;
+  }
+  if (d.lwClear !== undefined) {
+    await guarded(t, async () => done(await invoke("livewall_clear", { displays: d.lwClear === "all" ? null : [Number(d.lwClear)] }), "Wallpaper cleared"));
+    return true;
+  }
+  if (d.lwDelete !== undefined) {
+    if (d.confirm !== "1") { d.confirm = "1"; t.textContent = "Confirm"; return true; }
+    await guarded(t, async () => done(await invoke("livewall_delete", { id: d.lwDelete }), "Wallpaper deleted"));
+    return true;
+  }
+  if (d.lwPick !== undefined) { state.livewallSel = d.lwPick; renderPage(); return true; }
+  if (d.lwRefresh !== undefined) { await liveWallLoad(); return true; }
+  if (d.lwSystem !== undefined) { await guarded(t, () => call("livewall_set_system", { id: d.lwSystem }, "Windows wallpaper set")); return true; }
+  if (d.lwStyle !== undefined || d.lwStyleReset !== undefined) {
+    const id = d.lwStyle ?? d.lwStyleReset;
+    const style = Object.fromEntries(WALL_STYLE.map(([k]) => [k, d.lwStyleReset !== undefined ? (["brightness", "contrast", "saturation"].includes(k) ? 100 : 0) : num(`lw-st-${k}`, 0)]));
+    await guarded(t, async () => done(await invoke("livewall_style", { id, style }), "Wallpaper style saved"));
+    return true;
+  }
+  if (d.lwImport !== undefined) {
+    const file = $("lw-import")?.files?.[0];
+    if (!file) { setStatus("Choose a file to import first"); return true; }
+    await guarded(t, async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      done(await invoke("livewall_import", bytes, { headers: { "x-file-name": encodeURIComponent(file.name) } }), `${file.name} imported`);
+    });
+    return true;
+  }
+  if (d.lwCancel !== undefined) { await invoke("livewall_cancel", { id: d.lwCancel }).catch(() => {}); return true; }
+  return false;
+}
+
+if (window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("livewall:progress", (event) => {
+    const { id, percent } = event.payload ?? {};
+    const el = document.querySelector(`[data-wallpaper-download="${CSS.escape(String(id))}"]`);
+    if (el) el.textContent = `${percent}%`;
+  });
+}
+
 /* ------------------------------------------------------ selection toolbar -- */
 
 export function toolbarPage() {
@@ -1764,13 +1969,8 @@ export function wireLiveEvents() {
     if ("hubSettings" in d) return guarded(t, () => saveHubSettings());
     if (await companionClick(t)) return undefined;
     if (await pcClick(t)) return undefined;
-    if (d.wallpaperApply !== undefined) {
-      return guarded(t, async () => {
-        const result = await call("wallpaper_apply", { url: d.wallpaperApply, apply: true }, "Wallpaper downloaded");
-        setStatus(result.applied ? "Desktop wallpaper applied" : `Saved to ${result.path}`);
-        show("output", result);
-      });
-    }
+    if (await liveWallClick(t)) return undefined;
+    if (await rhythmClick(t)) return undefined;
     if ("updateDownload" in d) {
       return guarded(t, async () => {
         state.updatePath = await call("update_download", {}, "Update downloaded and verified");
@@ -1866,6 +2066,13 @@ export async function loadLivePage(pageId) {
     }
   } else if (pageId === "pcscript") {
     if (!state.pc) await loadPcScript();
+  } else if (pageId === "music") {
+    if (!state.rhythm) {
+      state.rhythm = await invoke("rhythm_get").catch(() => null);
+      if (state.rhythm) renderPage();
+    }
+  } else if (pageId === "wallpapers") {
+    if (!state.livewall) await liveWallLoad();
   } else if (pageId === "toolbar") {
     if (!state.toolbar) {
       state.toolbar = await invoke("toolbar_get").catch(() => null);

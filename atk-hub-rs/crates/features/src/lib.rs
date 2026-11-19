@@ -524,28 +524,20 @@ fn safe_zip_target(name: &str) -> Result<PathBuf, FeatureError> {
     Ok(path.to_path_buf())
 }
 
-/// Extracts a verified plugin bundle into `user_data/plugins/<id>/<version>`.
+/// Extracts a zip archive into `destination`, rejecting unsafe entry paths.
 ///
 /// # Errors
 ///
-/// Returns an error for a hash mismatch, an invalid archive, an unsafe entry
-/// path, or a filesystem failure.
-pub fn install_bundle_bytes(
-    id: &str,
-    version: &str,
-    bytes: &[u8],
-    expected_sha256: &str,
-    user_data: &Path,
-) -> Result<PathBuf, FeatureError> {
-    verify_sha256(bytes, expected_sha256)?;
-    let destination = user_data.join("plugins").join(id).join(version);
+/// Returns an error for an invalid archive, an unsafe entry path, or a
+/// filesystem failure.
+pub fn extract_zip(bytes: &[u8], destination: &Path) -> Result<(), FeatureError> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error: zip::result::ZipError| {
             FeatureError::InvalidArchive {
                 reason: error.to_string(),
             }
         })?;
-    fs::create_dir_all(&destination)?;
+    fs::create_dir_all(destination)?;
     for index in 0..archive.len() {
         let mut entry = archive
             .by_index(index)
@@ -569,6 +561,25 @@ pub fn install_bundle_bytes(
             std::io::copy(&mut entry, &mut output)?;
         }
     }
+    Ok(())
+}
+
+/// Extracts a verified plugin bundle into `user_data/plugins/<id>/<version>`.
+///
+/// # Errors
+///
+/// Returns an error for a hash mismatch, an invalid archive, an unsafe entry
+/// path, or a filesystem failure.
+pub fn install_bundle_bytes(
+    id: &str,
+    version: &str,
+    bytes: &[u8],
+    expected_sha256: &str,
+    user_data: &Path,
+) -> Result<PathBuf, FeatureError> {
+    verify_sha256(bytes, expected_sha256)?;
+    let destination = user_data.join("plugins").join(id).join(version);
+    extract_zip(bytes, &destination)?;
     Ok(destination)
 }
 

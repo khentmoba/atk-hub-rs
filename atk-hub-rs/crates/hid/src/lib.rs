@@ -71,6 +71,19 @@ pub trait Transport {
             Err(HidError::Timeout(expect))
         }
     }
+
+    /// Writes `data` without waiting for a reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error.
+    fn write_only(&mut self, report_id: u8, data: &[u8]) -> Result<(), HidError> {
+        let expect = data.first().copied().unwrap_or(0);
+        match self.transfer(report_id, data, expect) {
+            Ok(_) | Err(HidError::Timeout(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// A connected configuration interface.
@@ -220,6 +233,10 @@ impl HidTransport {
 }
 
 impl Transport for HidTransport {
+    fn write_only(&mut self, report_id: u8, data: &[u8]) -> Result<(), HidError> {
+        self.write_padded(report_id, data)
+    }
+
     fn transfer(&mut self, report_id: u8, data: &[u8], expect: u8) -> Result<Vec<u8>, HidError> {
         self.transfer_where(report_id, data, &|payload: &[u8]| {
             payload.first() == Some(&expect)

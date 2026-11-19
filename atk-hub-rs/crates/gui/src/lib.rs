@@ -10,8 +10,10 @@ use tauri::{Manager, State};
 
 mod headset;
 mod live;
+mod livewall;
 mod overlay;
 mod pcscript;
+mod rhythm;
 mod toolbar;
 
 #[cfg(not(windows))]
@@ -139,13 +141,13 @@ const PAGES: &[PageInfo] = &[
     PageInfo {
         id: "wallpapers",
         label: "Background Theme",
-        subtitle: "Cloud wallpaper catalogue",
+        subtitle: "Live desktop wallpapers for every monitor",
         group: "Library",
     },
     PageInfo {
         id: "music",
-        label: "Music Score Tool",
-        subtitle: "Legacy music rhythm service",
+        label: "Music Rhythm",
+        subtitle: "Keyboard lighting and wallpapers that dance to your music",
         group: "Library",
     },
     PageInfo {
@@ -997,6 +999,19 @@ pub fn run() {
             overlay::desktop_pet_reset_position,
             overlay::desktop_pet_sprite,
             overlay::desktop_pet_upload,
+            rhythm::rhythm_get,
+            rhythm::rhythm_set,
+            rhythm::rhythm_start,
+            rhythm::rhythm_stop,
+            livewall::livewall_list,
+            livewall::livewall_download,
+            livewall::livewall_cancel,
+            livewall::livewall_apply,
+            livewall::livewall_clear,
+            livewall::livewall_delete,
+            livewall::livewall_style,
+            livewall::livewall_import,
+            livewall::livewall_set_system,
             toolbar::toolbar_get,
             toolbar::toolbar_set,
             toolbar::toolbar_preview,
@@ -1082,6 +1097,8 @@ pub fn run() {
             overlay::build_overlays(app)?;
             overlay::spawn_input_watch(app.handle().clone());
             toolbar::build_toolbar(app)?;
+            livewall::restore(app.handle().clone());
+            rhythm::autostart(app.handle());
             toolbar::spawn_selection_watch(app.handle().clone());
             std::thread::spawn(pcscript::resume_on_startup);
             let state = app.state::<HubState>();

@@ -544,11 +544,39 @@ fn flash_chunks(records: &[u8], keys_per_chunk: usize, record: usize) -> Vec<(u1
         .collect()
 }
 
+/// Light-streaming command (`RGB888_0x1D`).
+pub const STREAM_RGB: u8 = 0x1D;
+/// Backlight effect that shows streamed per-key colours.
+pub const STREAM_MODE: u8 = 46;
+
+/// Builds per-key colour packets: `[0x1D, row, col, count, rgb...]`, each
+/// starting at the matrix position of its first light (row-major order).
+#[must_use]
+pub fn encode_rgb_stream(colors: &[[u8; 3]], cols: u8, per_packet: usize) -> Vec<Vec<u8>> {
+    let cols = usize::from(cols.max(1));
+    colors
+        .chunks(per_packet.max(1))
+        .enumerate()
+        .map(|(index, chunk)| {
+            let first = index * per_packet.max(1);
+            let mut packet = vec![
+                STREAM_RGB,
+                u8::try_from(first / cols).unwrap_or(u8::MAX),
+                u8::try_from(first % cols).unwrap_or(u8::MAX),
+                u8::try_from(chunk.len()).unwrap_or(u8::MAX),
+            ];
+            packet.extend(chunk.iter().flatten());
+            packet
+        })
+        .collect()
+}
+
 /// A VIA / BITYUAN keyboard.
 #[derive(Debug)]
 pub struct Keyboard<T: Transport> {
     transport: T,
     model: KeyboardModel,
+    stream_lights: usize,
 }
 
 impl Keyboard<HidTransport> {
@@ -578,6 +606,7 @@ impl<T: Transport> Keyboard<T> {
     pub fn new(transport: T, model: Option<KeyboardModel>) -> Self {
         Self {
             transport,
+            stream_lights: 0,
             model: model.unwrap_or(KeyboardModel {
                 name: "VIA Keyboard".into(),
                 layers: 4,
@@ -646,6 +675,66 @@ impl<T: Transport> Keyboard<T> {
             reply.get(5).copied().unwrap_or(0),
             reply.get(6).copied().unwrap_or(0)
         ))
+    }
+
+    /// Firmware version as the original's decimal code (`1.05` -> 105).
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn version_code(&mut self) -> Result<u32, HidError> {
+        let text = self.version()?.replace('.', "");
+        Ok(text.parse().unwrap_or(0))
+    }
+
+    /// Switches the backlight to streamed per-key colours. Firmware 2.00+
+    /// accepts frames directly; older firmware needs the streaming effect.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error.
+    pub fn begin_rgb_stream(&mut self) -> Result<(), HidError> {
+        let code = self.version_code().unwrap_or(0);
+        self.stream_lights = if code >= 200 { 112 } else { 41 };
+        if code < 200 {
+            self.set_lighting(Lighting {
+                mode: STREAM_MODE,
+                speed: 127,
+                brightness: 100,
+                color: [255, 0, 255],
+                colorful: 0,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Streams one frame of per-key colours (row-major, `rows x cols`).
+    /// Falls back to smaller packets when the interface rejects big reports.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error when even 32-byte packets fail.
+    pub fn stream_rgb(&mut self, colors: &[[u8; 3]]) -> Result<(), HidError> {
+        if self.stream_lights == 0 {
+            self.stream_lights = 41;
+        }
+        loop {
+            let packets = encode_rgb_stream(colors, self.model.cols, self.stream_lights);
+            let result = packets
+                .iter()
+                .try_for_each(|packet| self.transport.write_only(0, packet));
+            match result {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    // 64-byte then 32-byte reports.
+                    self.stream_lights = match self.stream_lights {
+                        n if n > 19 => 19,
+                        n if n > 9 => 9,
+                        _ => return Err(error),
+                    };
+                }
+            }
+        }
     }
 
     /// Reads the number of dynamic keymap layers and updates the model.
@@ -1178,6 +1267,18 @@ impl<T: Transport> Keyboard<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgb_stream_packets_start_at_matrix_positions() {
+        let colors: Vec<[u8; 3]> = (0..70u8).map(|i| [i, 0, 255 - i]).collect();
+        let packets = encode_rgb_stream(&colors, 14, 41);
+        assert_eq!(packets.len(), 2);
+        assert_eq!(&packets[0][..4], &[0x1D, 0, 0, 41]);
+        assert_eq!(packets[0].len(), 4 + 41 * 3);
+        // Light 41 sits at row 2, column 13 on a 14-column board.
+        assert_eq!(&packets[1][..4], &[0x1D, 2, 13, 29]);
+        assert_eq!(&packets[1][4..7], &[41, 0, 214]);
+    }
     use std::collections::VecDeque;
 
     #[derive(Default)]

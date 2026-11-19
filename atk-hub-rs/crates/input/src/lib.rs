@@ -3,6 +3,7 @@
 //! Injection is only performed when the user explicitly runs a macro; tests
 //! cover parsing and sequencing, never actual input events.
 
+pub mod loopback;
 pub mod system;
 
 use std::str::FromStr;
