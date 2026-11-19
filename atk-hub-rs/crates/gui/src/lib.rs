@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::fs;
 
 mod features_ui;
+mod theme;
 use features_ui::FeatureState;
 
 /// Page shown in the central panel.
@@ -93,6 +94,51 @@ impl Tab {
             Self::Plugins => "Plugins",
             Self::Updater => "Updater",
             Self::Drivers => "Drivers",
+        }
+    }
+
+    /// Short badge shown beside the page in the navigation rail. Letter
+    /// badges are used instead of glyphs so they render in every font.
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Overview => "H",
+            Self::Asar => "A",
+            Self::Config => "C",
+            Self::Endpoints => "E",
+            Self::Ipc => "I",
+            Self::Agent => "N",
+            Self::Devices => "D",
+            Self::Wallpapers => "W",
+            Self::Audio => "S",
+            Self::Lighting => "L",
+            Self::Macros => "M",
+            Self::Music => "P",
+            Self::Pets => "T",
+            Self::Plugins => "G",
+            Self::Updater => "U",
+            Self::Drivers => "R",
+        }
+    }
+
+    /// Short description shown under the page title.
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::Overview => "Device center · system status and architecture",
+            Self::Asar => "Inspect the packaged Electron archive",
+            Self::Config => "Edit the persisted application settings",
+            Self::Endpoints => "Cloud services used by the client",
+            Self::Ipc => "Recovered main-process channel registry",
+            Self::Agent => "Local named-pipe JSON protocol",
+            Self::Devices => "HID devices reported by the agent",
+            Self::Wallpapers => "Cloud wallpaper catalogue",
+            Self::Audio => "THX spatial audio properties",
+            Self::Lighting => "Keyboard backlight and effects",
+            Self::Macros => "Key sequences and bindings",
+            Self::Music => "Legacy rhythm service",
+            Self::Pets => "Desktop companion settings",
+            Self::Plugins => "Installed and downloadable extensions",
+            Self::Updater => "Version feed and installer",
+            Self::Drivers => "Driver packages and firmware",
         }
     }
 }
@@ -226,66 +272,216 @@ impl HubApp {
 
     /// Renders the whole interface into the given egui UI.
     pub fn render(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("navigation")
-            .resizable(false)
-            .exact_size(150.0)
-            .show(ui, |ui| {
-                ui.add_space(12.0);
-                ui.heading("ATK HUB");
-                ui.label("Rust port");
-                ui.separator();
-                for tab in Tab::ALL {
-                    ui.selectable_value(&mut self.tab, tab, tab.label());
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label("v3.2.31 behavior");
-                ui.label("Static, no code execution");
-            });
+        theme::apply(ui.ctx());
 
-        egui::Panel::top("title").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(self.tab.label());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("atk-hub-rs");
+        egui::Panel::top("atk-titlebar")
+            .frame(theme::top_frame())
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Label::new(
+                        egui::RichText::new("ATK HUB")
+                            .size(15.0)
+                            .strong()
+                            .color(theme::color::TEXT),
+                    ));
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(" / ").color(theme::color::HINT),
+                    ));
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(self.tab.label())
+                            .size(13.0)
+                            .color(theme::color::ACCENT_LIGHT),
+                    ));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (minimize, maximize, close) = theme::window_controls(ui);
+                        if minimize {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        if maximize {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                        }
+                        if close {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
                 });
             });
-        });
+
+        // Left navigation rail, grouped the way the ATK HUB hub is organised.
+        egui::Panel::left("atk-sidebar")
+            .resizable(false)
+            .exact_size(206.0)
+            .frame(theme::side_frame())
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    theme::logo(ui, egui::vec2(38.0, 38.0));
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new("ATK HUB")
+                                .size(15.0)
+                                .strong()
+                                .color(theme::color::TEXT),
+                        ));
+                        ui.add(egui::Label::new(
+                            egui::RichText::new("Rust port · 3.2.31")
+                                .size(10.0)
+                                .color(theme::color::HINT),
+                        ));
+                    });
+                });
+                ui.add_space(16.0);
+                ui.add(egui::Separator::default().spacing(4.0));
+
+                theme::nav_caption(ui, "DEVICE");
+                for tab in [
+                    Tab::Overview,
+                    Tab::Devices,
+                    Tab::Lighting,
+                    Tab::Macros,
+                    Tab::Audio,
+                    Tab::Wallpapers,
+                ] {
+                    if theme::nav_button(ui, tab.icon(), tab.label(), self.tab == tab) {
+                        self.tab = tab;
+                    }
+                }
+
+                theme::nav_caption(ui, "EXPERIENCE");
+                for tab in [
+                    Tab::Music,
+                    Tab::Pets,
+                    Tab::Plugins,
+                    Tab::Updater,
+                    Tab::Drivers,
+                ] {
+                    if theme::nav_button(ui, tab.icon(), tab.label(), self.tab == tab) {
+                        self.tab = tab;
+                    }
+                }
+
+                theme::nav_caption(ui, "DEVELOPER");
+                for tab in [Tab::Config, Tab::Endpoints, Tab::Ipc, Tab::Agent, Tab::Asar] {
+                    if theme::nav_button(ui, tab.icon(), tab.label(), self.tab == tab) {
+                        self.tab = tab;
+                    }
+                }
+
+                ui.add_space(14.0);
+                ui.add(egui::Separator::default().spacing(4.0));
+                theme::muted(ui, "Static port · no code execution");
+            });
 
         let tab = self.tab;
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| match tab {
-                Tab::Overview => self.overview_ui(ui),
-                Tab::Asar => self.asar_ui(ui),
-                Tab::Config => self.config_ui(ui),
-                Tab::Endpoints => self.endpoints_ui(ui),
-                Tab::Ipc => self.ipc_ui(ui),
-                Tab::Agent => self.agent_ui(ui),
-                Tab::Devices => self.devices_ui(ui),
-                Tab::Wallpapers => self.wallpapers_ui(ui),
-                Tab::Audio => self.audio_ui(ui),
-                Tab::Lighting => self.lighting_ui(ui),
-                Tab::Macros => self.macros_ui(ui),
-                Tab::Music => self.music_ui(ui),
-                Tab::Pets => self.pets_ui(ui),
-                Tab::Plugins => self.plugins_ui(ui),
-                Tab::Updater => self.updater_ui(ui),
-                Tab::Drivers => self.drivers_ui(ui),
+        egui::CentralPanel::default()
+            .frame(theme::content_frame())
+            .show(ui, |ui| {
+                theme::page_header(ui, tab.label(), tab.subtitle());
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        theme::card(ui, |ui| match tab {
+                            Tab::Overview => self.overview_ui(ui),
+                            Tab::Asar => self.asar_ui(ui),
+                            Tab::Config => self.config_ui(ui),
+                            Tab::Endpoints => self.endpoints_ui(ui),
+                            Tab::Ipc => self.ipc_ui(ui),
+                            Tab::Agent => self.agent_ui(ui),
+                            Tab::Devices => self.devices_ui(ui),
+                            Tab::Wallpapers => self.wallpapers_ui(ui),
+                            Tab::Audio => self.audio_ui(ui),
+                            Tab::Lighting => self.lighting_ui(ui),
+                            Tab::Macros => self.macros_ui(ui),
+                            Tab::Music => self.music_ui(ui),
+                            Tab::Pets => self.pets_ui(ui),
+                            Tab::Plugins => self.plugins_ui(ui),
+                            Tab::Updater => self.updater_ui(ui),
+                            Tab::Drivers => self.drivers_ui(ui),
+                        });
+                    });
             });
-        });
     }
 
     fn overview_ui(&self, ui: &mut egui::Ui) {
-        ui.heading("Ported architecture");
+        ui.horizontal(|ui| {
+            theme::logo(ui, egui::vec2(56.0, 56.0));
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.add(egui::Label::new(
+                    egui::RichText::new("ATK HUB — Rust port")
+                        .size(22.0)
+                        .strong()
+                        .color(theme::color::TEXT),
+                ));
+                ui.add(egui::Label::new(
+                    egui::RichText::new("One hub for every ATK / VXE device")
+                        .size(13.0)
+                        .color(theme::color::MUTED),
+                ));
+                ui.add(egui::Label::new(
+                    egui::RichText::new("v3.2.31 behavior · native eframe interface")
+                        .size(11.0)
+                        .color(theme::color::HINT),
+                ));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                ui.add(egui::Label::new(
+                    egui::RichText::new("●  ALL SYSTEMS READY")
+                        .size(12.0)
+                        .strong()
+                        .color(theme::color::SUCCESS),
+                ));
+            });
+        });
+        ui.add_space(18.0);
+
+        // Status tiles, laid out like the device cards in the original hub.
+        ui.columns(3, |columns| {
+            status_tile(
+                &mut columns[0],
+                "AGENT SERVICE",
+                "Named pipe",
+                "Local JSON control channel",
+                theme::color::SUCCESS,
+            );
+            status_tile(
+                &mut columns[1],
+                "RENDERER",
+                "Native GUI",
+                "Statically ported core crates",
+                theme::color::ACCENT,
+            );
+            status_tile(
+                &mut columns[2],
+                "UI VERSION",
+                "3.2.31",
+                "Behavior-compatible port",
+                theme::color::CORAL,
+            );
+        });
+        ui.add_space(18.0);
+
+        theme::h2(ui, "Ported architecture");
         ui.add_space(6.0);
         ui.label("ATK HUB is three layers. This Rust application replaces the Electron main process and renderer with statically ported core crates and a native GUI.");
         ui.add_space(10.0);
 
         egui::Grid::new("architecture")
             .striped(true)
+            .spacing(egui::vec2(18.0, 6.0))
             .show(ui, |ui| {
-                ui.heading("Layer");
-                ui.heading("Rust equivalent");
+                ui.add(egui::Label::new(
+                    egui::RichText::new("Layer")
+                        .strong()
+                        .color(theme::color::ACCENT_LIGHT),
+                ));
+                ui.add(egui::Label::new(
+                    egui::RichText::new("Rust equivalent")
+                        .strong()
+                        .color(theme::color::ACCENT_LIGHT),
+                ));
                 ui.end_row();
                 for (original, port) in [
                     (
@@ -307,17 +503,20 @@ impl HubApp {
                 }
             });
 
-        ui.add_space(12.0);
-        ui.heading("Verification status");
-        ui.label("cargo build, cargo test and cargo clippy run without warnings. GUI rendering is exercised by an offscreen egui test, so no window is opened by the test suite.");
+        ui.add_space(14.0);
+        theme::h3(ui, "Verification");
+        theme::muted(
+            ui,
+            "cargo build, cargo test and cargo clippy run without warnings. Every page is rendered offscreen by the test suite, so no window is opened during verification.",
+        );
     }
 
     fn asar_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("ASAR manifest inspector");
+        theme::h2(ui, "ASAR manifest inspector");
         ui.label("Path to an Electron app.asar (the installed ATK HUB archive is prefillable).");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.asar_path);
-            if ui.button("Load").clicked() {
+            if theme::primary_button(ui, "Load").clicked() {
                 self.load_asar();
             }
         });
@@ -374,7 +573,7 @@ impl HubApp {
     }
 
     fn config_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("config.json editor");
+        theme::h2(ui, "config.json editor");
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.config_path);
             if ui.button("Load").clicked() {
@@ -397,7 +596,7 @@ impl HubApp {
             ui.text_edit_singleline(&mut self.ui_version);
         });
 
-        if ui.button("Apply to document").clicked() {
+        if theme::primary_button(ui, "Apply to document").clicked() {
             self.apply_config();
         }
         ui.add_space(6.0);
@@ -443,7 +642,7 @@ impl HubApp {
     }
 
     fn endpoints_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Remote endpoints");
+        theme::h2(ui, "Remote endpoints");
         ui.label("Identifiers are decimal in the generated URLs, matching JavaScript template interpolation.");
         ui.horizontal(|ui| {
             ui.label("Vendor");
@@ -481,17 +680,20 @@ impl HubApp {
         ];
 
         ui.add_space(8.0);
-        egui::Grid::new("endpoints").striped(true).show(ui, |ui| {
-            for (name, url) in urls {
-                ui.label(name);
-                ui.label(url);
-                ui.end_row();
-            }
-        });
+        egui::Grid::new("endpoints")
+            .striped(true)
+            .spacing(egui::vec2(18.0, 6.0))
+            .show(ui, |ui| {
+                for (name, url) in urls {
+                    ui.label(name);
+                    ui.label(url);
+                    ui.end_row();
+                }
+            });
     }
 
     fn ipc_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("IPC registry");
+        theme::h2(ui, "IPC registry");
         ui.label(format!(
             "{} literal channels recovered from the main process",
             all().len()
@@ -540,7 +742,7 @@ impl HubApp {
             });
 
         ui.separator();
-        ui.heading("Rust-agent allowlist");
+        theme::h2(ui, "Rust-agent allowlist");
         ui.horizontal_wrapped(|ui| {
             for method in atk_ipc::AGENT_METHODS {
                 let color = if is_agent_method(method) {
@@ -668,7 +870,7 @@ impl HubApp {
     }
 
     fn audio_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("THX audio (gRPC over TLS)");
+        theme::h2(ui, "THX audio (gRPC over TLS)");
         ui.label(
             "Reads C:\\ProgramData\\thx\\<product>\\thx_properties.tcp, like the original client.",
         );
@@ -682,7 +884,7 @@ impl HubApp {
         ui.label(self.audio_status.as_str());
         ui.separator();
 
-        let read = ui.button("Read status").clicked();
+        let read = theme::primary_button(ui, "Read status").clicked();
         let enable = ui.button("Enable spatial").clicked();
         let disable = ui.button("Disable spatial").clicked();
         if read {
@@ -712,9 +914,9 @@ impl HubApp {
     }
 
     fn wallpapers_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Wallpaper catalogue");
+        theme::h2(ui, "Wallpaper catalogue");
         ui.label("Live entries from wallpaper.atkgear.com/list-v2.json.");
-        if ui.button("Refresh catalogue").clicked() {
+        if theme::primary_button(ui, "Refresh catalogue").clicked() {
             self.refresh_catalog();
         }
         ui.label(self.wallpaper_status.as_str());
@@ -780,9 +982,9 @@ impl HubApp {
     }
 
     fn devices_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Live HID devices");
+        theme::h2(ui, "Live HID devices");
         ui.label("Connect to the agent on the Agent page, then refresh this list.");
-        if ui.button("Refresh devices").clicked() {
+        if theme::primary_button(ui, "Refresh devices").clicked() {
             self.refresh_devices();
         }
         ui.label(self.devices_status.as_str());
@@ -804,14 +1006,14 @@ impl HubApp {
         });
 
         ui.separator();
-        ui.heading("HID control");
+        theme::h2(ui, "HID control");
         ui.horizontal(|ui| {
             ui.label("VID");
             ui.text_edit_singleline(&mut self.control_vid);
             ui.label("PID");
             ui.text_edit_singleline(&mut self.control_pid);
         });
-        let connect = ui.button("Connect device").clicked();
+        let connect = theme::primary_button(ui, "Connect device").clicked();
         let disconnect = ui.button("Disconnect").clicked();
         let state = ui.button("Refresh state").clicked();
         if connect {
@@ -874,7 +1076,7 @@ impl HubApp {
     }
 
     fn agent_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Named-pipe protocol");
+        theme::h2(ui, "Named-pipe protocol");
         ui.horizontal(|ui| {
             ui.label("Pipe");
             ui.text_edit_singleline(&mut self.pipe_name);
@@ -888,9 +1090,9 @@ impl HubApp {
         ui.label(self.pipe_status.as_str());
         ui.separator();
 
-        ui.heading("Live connection");
+        theme::h2(ui, "Live connection");
         ui.horizontal(|ui| {
-            if ui.button("Connect").clicked() {
+            if theme::primary_button(ui, "Connect").clicked() {
                 self.connect_live();
             }
             if ui.button("Disconnect").clicked() {
@@ -905,7 +1107,7 @@ impl HubApp {
         ui.add(egui::TextEdit::multiline(&mut self.live_result).desired_rows(4));
         ui.separator();
 
-        ui.heading("Request frame");
+        theme::h2(ui, "Request frame");
         ui.horizontal(|ui| {
             ui.label("Id");
             ui.text_edit_singleline(&mut self.request_id);
@@ -922,7 +1124,7 @@ impl HubApp {
         ui.add(egui::TextEdit::multiline(&mut self.encoded_request).desired_rows(3));
 
         ui.separator();
-        ui.heading("Response decoder");
+        theme::h2(ui, "Response decoder");
         ui.add(egui::TextEdit::multiline(&mut self.frame_input).desired_rows(3));
         if ui.button("Decode").clicked() {
             self.decode_frame();
@@ -961,6 +1163,28 @@ impl HubApp {
             Err(error) => format!("Error: {error}"),
         };
     }
+}
+
+/// A compact dashboard tile used on the device-center page.
+fn status_tile(ui: &mut egui::Ui, title: &str, value: &str, detail: &str, accent: egui::Color32) {
+    theme::tile(ui, |ui| {
+        ui.horizontal(|ui| {
+            theme::swatch(ui, accent, egui::vec2(10.0, 10.0));
+            ui.add(egui::Label::new(
+                egui::RichText::new(title)
+                    .size(10.0)
+                    .strong()
+                    .color(theme::color::HINT),
+            ));
+        });
+        ui.add(egui::Label::new(
+            egui::RichText::new(value)
+                .size(17.0)
+                .strong()
+                .color(theme::color::TEXT),
+        ));
+        theme::muted(ui, detail);
+    });
 }
 
 fn parse_id(text: &str) -> u16 {

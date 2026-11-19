@@ -28,6 +28,7 @@ atk-audio.workspace = true
 atk-features.workspace = true
 atk-input.workspace = true
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "net"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [lints]
 workspace = true
